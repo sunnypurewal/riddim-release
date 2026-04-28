@@ -46,12 +46,27 @@
       ]
     },
     "sales_trends": {
-      "enabled": false,
-      "reports": []
+      "enabled": true,
+      "vendor_number": "12345678",
+      "reports": [
+        {
+          "frequency": "DAILY",
+          "report_type": "SALES",
+          "report_subtype": "SUMMARY",
+          "version": "1_0"
+        }
+      ]
     },
     "finance": {
-      "enabled": false,
-      "reports": []
+      "enabled": true,
+      "vendor_number": "12345678",
+      "reports": [
+        {
+          "region_code": "US",
+          "report_type": "FINANCIAL",
+          "fiscal_period": "2026-04"
+        }
+      ]
     }
   }
 }

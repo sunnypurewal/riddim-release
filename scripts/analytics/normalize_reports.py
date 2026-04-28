@@ -112,6 +112,10 @@ def enrichment(report: dict[str, Any]) -> dict[str, str]:
         "_report_type": str(report.get("type") or ""),
         "_granularity": str(report.get("granularity") or ""),
         "_downloaded_at": str(report.get("downloaded_at") or ""),
+        "_app_id": str(report.get("app_id") or ""),
+        "_bundle_id": str(report.get("bundle_id") or ""),
+        "_release_tag": str(report.get("release_tag") or ""),
+        "_jira_keys": ",".join(str(key) for key in report.get("jira_keys", [])),
         "_tool_version": TOOL_VERSION,
     }
 

@@ -25,6 +25,9 @@ jobs:
         with:
           args: .github/workflows/collect-asc-analytics.yml .github/workflows/self-test-analytics.yml templates/workflows/collect-asc-analytics.shim.yml
 
+      - name: Install Python dependencies
+        run: python3 -m pip install --upgrade pip -r scripts/release/requirements.txt
+
       - name: Run analytics artifact tests
         run: python3 -m unittest discover -s scripts/analytics -p 'test*.py'
 

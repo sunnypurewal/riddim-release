@@ -184,11 +184,17 @@ def manifest_entry(
     status: str,
     status_reason: str | None = None,
 ) -> dict[str, Any]:
+    app = config.get("app", {})
+    business_context = config.get("business_context_mappings") or config.get("business_context") or {}
     checksum = sha256_file(raw_path) if raw_path else None
     row_count = count_gzip_tsv_rows(raw_path) if raw_path else None
     return {
         "artifact_id": artifact_id,
         "family": family,
+        "app_id": app.get("app_id") or app.get("apple_app_id"),
+        "bundle_id": app.get("bundle_id"),
+        "release_tag": business_context.get("release_tag"),
+        "jira_keys": business_context.get("jira_keys") or [],
         "category": category,
         "type": report_type,
         "subtype": subtype,

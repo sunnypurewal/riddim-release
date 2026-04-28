@@ -123,7 +123,7 @@ without `create_requests` after reports become available.
 ## Daily Operation
 
 The shim includes a daily schedule. Scheduled runs collect enabled report
-families, normalize rows, write `manifest.json`, `schema.json`, `summary.md`,
+families, normalize rows, write `manifest.json`, schema snapshots, `summary.md`,
 and upload the artifact as a GitHub Actions artifact. To preserve generated
 files in the repo, download the workflow artifact and commit it on a review
 branch; do not silently mutate `main`.
@@ -131,11 +131,11 @@ branch; do not silently mutate `main`.
 Expected artifact tree:
 
 ```text
-docs/analytics/app-store-connect/pleaseplay/2026-04-27/
+docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/
   manifest.json
-  schema.json
   summary.md
   raw/
+  schema/
   normalized/
   evaluation/
 ```
@@ -145,12 +145,14 @@ docs/analytics/app-store-connect/pleaseplay/2026-04-27/
 Use `manifest.json` as the source of truth for completeness:
 
 - `downloaded` or `unchanged`: raw file is present and checksummed.
-- `missing_report_request`: create the Analytics Report request with Admin.
-- `unavailable`: Apple has not generated that report/date or the report does
-  not exist for the app.
+- `unavailable`: no Analytics Report request exists or the report does not
+  exist for the app.
+- `delayed`: Apple has not finished generating that report instance.
+- `missing_segment`: an instance exists, but one or more downloadable segments
+  were absent.
 - `permission_blocked`: API key role cannot access the family.
-- `thresholded_or_empty`: parsing found no rows; this is insufficient data, not
-  proof of zero activity.
+- `thresholded` or `empty`: parsing found no rows or Apple withheld data; this
+  is insufficient data, not proof of zero activity.
 
 ## Campaign Evaluation
 

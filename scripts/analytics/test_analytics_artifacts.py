@@ -85,8 +85,8 @@ class FakeAscClient:
         self.download_count += 1
         return self.data
 
-    def request(self, method, path, params=None):
-        self.endpoint_requests.append((method, path, params or {}))
+    def request(self, method, path, params=None, **kwargs):
+        self.endpoint_requests.append((method, path, params or {}, kwargs))
         if path in self.fail_paths:
             raise self.fail_paths[path]
         return type("Response", (), {"content": self.data})()
@@ -226,6 +226,12 @@ class AnalyticsCollectorTests(unittest.TestCase):
             self.assertEqual({item["family"] for item in manifest["reports"]}, {"sales", "finance"})
             self.assertEqual({item["status"] for item in manifest["reports"]}, {"downloaded"})
             self.assertEqual({request[1] for request in client.endpoint_requests}, {"/v1/salesReports", "/v1/financeReports"})
+            self.assertTrue(
+                all(
+                    request[3]["headers"]["Accept"] == "application/a-gzip"
+                    for request in client.endpoint_requests
+                )
+            )
 
     def test_normalize_and_evaluate_use_manifest_reports(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -243,6 +249,10 @@ class AnalyticsCollectorTests(unittest.TestCase):
             report = normalized_manifest["reports"][0]
             row = json.loads(Path(report["normalized_path"]).read_text().splitlines()[0])
             self.assertEqual(row["Unexpected Column"], "kept")
+            self.assertEqual(row["_app_id"], "1234567890")
+            self.assertEqual(row["_bundle_id"], "com.riddim.fixture")
+            self.assertEqual(row["_release_tag"], "v1.0.0")
+            self.assertEqual(row["_jira_keys"], "RIDDIM-59")
             self.assertTrue(Path(report["schema_path"]).exists())
             self.assertIn("Privacy And Completeness", (root / "summary.md").read_text())
 

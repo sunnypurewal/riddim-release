@@ -29,7 +29,7 @@ from scripts.analytics.catalog import analytics_enabled, analytics_family, analy
 
 
 def build_plan(config: dict[str, Any], report_date: str, requested: set[str] | None = None) -> list[dict[str, Any]]:
-    selected = requested or {"analytics", "sales", "finance"}
+    selected = requested if requested is not None else {"analytics", "sales", "finance"}
     plan: list[dict[str, Any]] = []
     if "analytics" in selected and analytics_enabled(config):
         family = analytics_family(config)
@@ -502,7 +502,7 @@ def write_endpoint_report_once(client: AscClient, manifest: dict[str, Any], arti
         if recorded_checksum and checksum != recorded_checksum:
             raise RuntimeError(f"Existing raw report checksum mismatch for {raw_path}; refusing to rewrite immutable raw file.")
         return "unchanged"
-    data = client.request("GET", endpoint, params=params).content
+    data = client.request("GET", endpoint, params=params, headers={"Accept": "application/a-gzip"}).content
     downloaded_checksum = sha256_bytes(data)
     if existing and existing.get("checksum_sha256") and existing["checksum_sha256"] != downloaded_checksum:
         raise RuntimeError(f"Downloaded report checksum changed for {artifact_id}; refusing to overwrite immutable raw file.")
