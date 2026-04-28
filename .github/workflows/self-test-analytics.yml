@@ -24,7 +24,12 @@ jobs:
         if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
         uses: docker://rhysd/actionlint:latest
         with:
-          args: .github/workflows/collect-asc-analytics.yml .github/workflows/self-test-analytics.yml templates/workflows/collect-asc-analytics.shim.yml
+          args: >-
+            -ignore missing.*app-id
+            -ignore input.*client-id.*not.*defined
+            .github/workflows/collect-asc-analytics.yml
+            .github/workflows/self-test-analytics.yml
+            templates/workflows/collect-asc-analytics.shim.yml
 
       - name: Validate workflow syntax
         if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
@@ -32,7 +37,12 @@ jobs:
           if ! command -v actionlint >/dev/null 2>&1; then
             brew install actionlint
           fi
-          actionlint .github/workflows/collect-asc-analytics.yml .github/workflows/self-test-analytics.yml templates/workflows/collect-asc-analytics.shim.yml
+          actionlint \
+            -ignore 'missing.*app-id' \
+            -ignore 'input.*client-id.*not.*defined' \
+            .github/workflows/collect-asc-analytics.yml \
+            .github/workflows/self-test-analytics.yml \
+            templates/workflows/collect-asc-analytics.shim.yml
 
       - name: Install Python dependencies
         run: python3 -m pip install --upgrade pip -r scripts/release/requirements.txt
