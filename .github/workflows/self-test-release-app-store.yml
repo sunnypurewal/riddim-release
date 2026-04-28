@@ -16,17 +16,13 @@ jobs:
   release-app-store-fixture:
     runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Validate release-app-store workflow syntax
         if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
         uses: docker://rhysd/actionlint:latest
         with:
-          args: >-
-            -ignore missing.*app-id
-            -ignore input.*client-id.*not.*defined
-            .github/workflows/release-app-store.yml
-            .github/workflows/self-test-release-app-store.yml
+          args: .github/workflows/release-app-store.yml .github/workflows/self-test-release-app-store.yml
 
       - name: Validate release-app-store workflow syntax
         if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
@@ -34,11 +30,7 @@ jobs:
           if ! command -v actionlint >/dev/null 2>&1; then
             brew install actionlint
           fi
-          actionlint \
-            -ignore 'missing.*app-id' \
-            -ignore 'input.*client-id.*not.*defined' \
-            .github/workflows/release-app-store.yml \
-            .github/workflows/self-test-release-app-store.yml
+          actionlint .github/workflows/release-app-store.yml .github/workflows/self-test-release-app-store.yml
 
       - name: Run mocked find-build fixture
         run: python3 scripts/release/test_find_qualifying_build.py

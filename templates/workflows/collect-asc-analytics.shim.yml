@@ -41,7 +41,6 @@ jobs:
   call:
     uses: RiddimSoftware/riddim-release/.github/workflows/collect-asc-analytics.yml@v1
     with:
-      riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
       config_path: docs/analytics/report-catalog.json
       report_date: ${{ inputs.report_date || '' }}
       families: ${{ inputs.families || 'analytics,sales,finance' }}
@@ -51,7 +50,6 @@ jobs:
       evaluate_jira_key: ${{ inputs.evaluate_jira_key || '' }}
       runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
     secrets:
-      riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}

@@ -194,31 +194,18 @@ gh secret set AWS_RELEASE_ROLE_ARN --repo "$GH_REPO" --body "$AWS_RELEASE_ROLE_A
 openssl rand -base64 32 | gh secret set KEYCHAIN_PASSWORD --repo "$GH_REPO"
 ```
 
-Because `riddim-release` is private, reusable workflows mint a short-lived
-GitHub App installation token before checking out shared scripts. The App must
-be installed on `RiddimSoftware/riddim-release` with read-only `Contents`
-permission. Store the App client ID as an org variable and private key as an
-org secret, then grant the secret to each consuming repo:
+Because `riddim-release` is private, reusable workflows need a token that can
+read this repo when they check out shared scripts. Store a fine-grained PAT with
+read-only `Contents` access to `RiddimSoftware/riddim-release` as
+`RIDDIM_RELEASE_TOKEN` in each consuming repo:
 
 ```bash
-gh variable set RIDDIM_ACTIONS_APP_CLIENT_ID \
-  --org RiddimSoftware \
-  --body "$RIDDIM_ACTIONS_APP_CLIENT_ID"
-
-gh secret set RIDDIM_ACTIONS_APP_PRIVATE_KEY \
-  --org RiddimSoftware \
-  --visibility selected \
-  --repos "${GH_REPO#*/}" < /path/to/riddim-actions.private-key.pem
+gh secret set RIDDIM_RELEASE_TOKEN --repo "$GH_REPO" --body "$RIDDIM_RELEASE_TOKEN"
 ```
 
-The copied workflow shims pass these through explicitly:
-
-```yaml
-with:
-  riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
-secrets:
-  riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
-```
+If the repo already has `RUNNER_BUDGET_PAT` with `repo` access for the budget
+watcher, the workflows can use that as a fallback, but a narrower
+`RIDDIM_RELEASE_TOKEN` is preferred.
 
 ### Register a self-hosted runner
 
@@ -425,8 +412,9 @@ required reviewers to `app-store-release` (e.g. private repo on Free plan).
 gh secret set SLACK_RELEASES_WEBHOOK --repo "$GH_REPO" --body "https://hooks.slack.com/services/..."
 ```
 
-Make sure the consuming repo's `.github/workflows/build-deploy.yml` shim
-forwards `SLACK_RELEASES_WEBHOOK` in its explicit `secrets:` map.
+Make sure the consuming repo's shim forwards secrets — `secrets: inherit` in
+`.github/workflows/build-deploy.yml` is the simplest form. If the shim names
+secrets explicitly, add `SLACK_RELEASES_WEBHOOK: ${{ secrets.SLACK_RELEASES_WEBHOOK }}`.
 
 When the webhook secret is **unset**, the notify step logs a skip line and
 the workflow continues — no setup is required to opt out.

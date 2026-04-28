@@ -1,8 +1,7 @@
 # riddim-release template - copy to .github/workflows/deliver-metadata.yml and adjust
 # The paths: filter lives HERE (not in the reusable workflow) because workflow_call does not
 # accept paths: filters. Adjust the paths to match this repo's fastlane layout.
-# Requires repo variables: BUNDLE_ID, TEAM_ID, RUNNER_LABELS_MAC, RUNNER_LABELS_LINUX,
-#   RIDDIM_ACTIONS_APP_CLIENT_ID
+# Requires repo variables: BUNDLE_ID, TEAM_ID, RUNNER_LABELS_MAC, RUNNER_LABELS_LINUX
 # Optional variables: IOS_WORKDIR (default: ios)
 name: Deliver Metadata
 on:
@@ -21,12 +20,9 @@ jobs:
   call:
     uses: RiddimSoftware/riddim-release/.github/workflows/deliver-metadata.yml@v1
     with:
-      riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
       ios_workdir:         ${{ vars.IOS_WORKDIR || 'ios' }}
       bundle_id:           ${{ vars.BUNDLE_ID }}
       team_id:             ${{ vars.TEAM_ID }}
       runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
       runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
-    secrets:
-      AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
-      riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+    secrets: inherit

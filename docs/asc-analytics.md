@@ -28,16 +28,6 @@ curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/v1/t
   -o .github/workflows/collect-asc-analytics.yml
 ```
 
-The shim expects access to the org-level GitHub App credentials used for the
-private `riddim-release` checkout:
-
-```yaml
-with:
-  riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
-secrets:
-  riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
-```
-
 Add `docs/analytics/report-catalog.json`:
 
 ```json

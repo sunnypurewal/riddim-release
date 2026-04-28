@@ -24,7 +24,6 @@ jobs:
   call:
     uses: RiddimSoftware/riddim-release/.github/workflows/release-app-store.yml@v1
     with:
-      riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
       apple_app_id:         ${{ vars.APPLE_APP_ID }}
       bundle_id:            ${{ vars.BUNDLE_ID }}
       ios_workdir:          ${{ vars.IOS_WORKDIR || 'ios' }}
@@ -34,6 +33,4 @@ jobs:
       approval_environment: ${{ vars.APPROVAL_ENVIRONMENT || 'app-store-release' }}
       runner_labels_mac:    ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
       runner_labels_linux:  ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
-    secrets:
-      AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
-      riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+    secrets: inherit

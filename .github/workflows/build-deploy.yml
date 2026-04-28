@@ -8,9 +8,6 @@ name: Build and Deploy (reusable)
 on:
   workflow_call:
     inputs:
-      riddim_actions_app_client_id:
-        required: true
-        type: string
       apple_app_id:
         required: true
         type: string
@@ -61,8 +58,10 @@ on:
         required: true
       KEYCHAIN_PASSWORD:
         required: true
-      riddim_actions_app_private_key:
-        required: true
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
       SENTRY_DSN:
         required: false
       SENTRY_AUTH_TOKEN:
@@ -97,7 +96,7 @@ jobs:
     outputs:
       next_version: ${{ steps.version.outputs.next_version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -107,22 +106,12 @@ jobs:
           role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Mint riddim-release checkout token
-        id: riddim-release-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ inputs.riddim_actions_app_client_id }}
-          private-key: ${{ secrets.riddim_actions_app_private_key }}
-          owner: RiddimSoftware
-          repositories: riddim-release
-          permission-contents: read
-
       - name: Checkout riddim-release
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ steps.riddim-release-token.outputs.token }}
+          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Fetch ASC credentials
@@ -151,24 +140,14 @@ jobs:
     outputs:
       build_number: ${{ steps.build-number.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Mint riddim-release checkout token
-        id: riddim-release-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ inputs.riddim_actions_app_client_id }}
-          private-key: ${{ secrets.riddim_actions_app_private_key }}
-          owner: RiddimSoftware
-          repositories: riddim-release
-          permission-contents: read
+      - uses: actions/checkout@v4
 
       - name: Checkout riddim-release
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ steps.riddim-release-token.outputs.token }}
+          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Select Xcode
@@ -228,6 +207,9 @@ jobs:
           NEW_VERSION: ${{ needs.compute-version.outputs.next_version }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         run: |
           bundle exec fastlane deploy \
             scheme:${{ inputs.scheme }} \
@@ -269,26 +251,16 @@ jobs:
     needs: [compute-version, build-upload]
     if: ${{ !inputs.dry_run }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Mint riddim-release checkout token
-        id: riddim-release-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ inputs.riddim_actions_app_client_id }}
-          private-key: ${{ secrets.riddim_actions_app_private_key }}
-          owner: RiddimSoftware
-          repositories: riddim-release
-          permission-contents: read
-
       - name: Checkout riddim-release
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ steps.riddim-release-token.outputs.token }}
+          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Generate release notes
