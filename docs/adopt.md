@@ -194,6 +194,19 @@ gh secret set AWS_RELEASE_ROLE_ARN --repo "$GH_REPO" --body "$AWS_RELEASE_ROLE_A
 openssl rand -base64 32 | gh secret set KEYCHAIN_PASSWORD --repo "$GH_REPO"
 ```
 
+Because `riddim-release` is private, reusable workflows need a token that can
+read this repo when they check out shared scripts. Store a fine-grained PAT with
+read-only `Contents` access to `sunnypurewal/riddim-release` as
+`RIDDIM_RELEASE_TOKEN` in each consuming repo:
+
+```bash
+gh secret set RIDDIM_RELEASE_TOKEN --repo "$GH_REPO" --body "$RIDDIM_RELEASE_TOKEN"
+```
+
+If the repo already has `RUNNER_BUDGET_PAT` with `repo` access for the budget
+watcher, the workflows can use that as a fallback, but a narrower
+`RIDDIM_RELEASE_TOKEN` is preferred.
+
 ### Register a self-hosted runner
 
 Hosted macOS works for the default path. For budget fallback or faster local

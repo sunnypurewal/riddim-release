@@ -43,6 +43,10 @@ on:
         type: string
         default: "3.12"
     secrets:
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
       ASC_KEY_ID:
         required: false
       ASC_ISSUER_ID:
@@ -71,14 +75,17 @@ jobs:
         with:
           repository: sunnypurewal/riddim-release
           ref: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Set up Python
+        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
 
       - name: Install Python dependencies
+        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         run: python3 -m pip install --upgrade pip -r .riddim-release/scripts/release/requirements.txt
 
       - name: Prepare ASC private key
