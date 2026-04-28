@@ -222,7 +222,12 @@ jobs:
         id: build-number
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ inputs.ios_workdir }}
-        run: echo "build_number=$(cat build_number.txt)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ ! -s build_number.txt ]; then
+            echo "::error::build_number.txt was not written by the Fastlane deploy lane"
+            exit 1
+          fi
+          echo "build_number=$(cat build_number.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Upload dSYMs to Sentry
         if: ${{ !inputs.dry_run }}
