@@ -226,7 +226,7 @@ already-running jobs.
 Common failures:
 
 - `RUNNER_BUDGET_PAT` is missing or expired.
-- The PAT lacks `read:billing` or `repo`.
+- The PAT lacks `read:user`, `read:billing`, or `repo`.
 - GitHub changes the user billing endpoint.
 - `jq` or `gh` is missing on the runner currently selected by
   `RUNNER_LABELS_LINUX`.
