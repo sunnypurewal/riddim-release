@@ -2,8 +2,7 @@ name: Build and Deploy (reusable)
 
 # Reusable workflow: archive an iOS app, upload to TestFlight, and create
 # a draft GitHub Release. Callers supply all app-specific params via inputs.
-# Set dry_run: true to verify version computation and workflow wiring without
-# signing, archiving, uploading to TestFlight, or creating a draft release.
+# Set dry_run: true to build the archive but skip TestFlight + draft release.
 
 on:
   workflow_call:
@@ -76,7 +75,7 @@ concurrency:
   cancel-in-progress: false   # never cancel a deploy mid-flight
 
 env:
-  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}   # pin callers to stable v1; override for pre-tag self-tests
+  RIDDIM_RELEASE_REF: v1   # pin callers to the stable v1 contract; override for testing
 
 jobs:
   # ─── Job 1: Determine the next version ─────────────────────────────────────
@@ -138,13 +137,11 @@ jobs:
           path: .riddim-release
 
       - name: Select Xcode
-        if: ${{ !inputs.dry_run }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
       - name: Cache Swift packages
-        if: ${{ !inputs.dry_run }}
         uses: actions/cache@v4
         with:
           path: ~/Library/Developer/Xcode/DerivedData/*/SourcePackages
@@ -153,7 +150,6 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Set up Ruby and Bundler
-        if: ${{ !inputs.dry_run }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
@@ -161,31 +157,21 @@ jobs:
           working-directory: ${{ inputs.ios_workdir }}
 
       - name: Configure AWS credentials via OIDC
-        if: ${{ !inputs.dry_run }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Fetch ASC credentials
-        if: ${{ !inputs.dry_run }}
         run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Fetch distribution certificate
-        if: ${{ !inputs.dry_run }}
         run: bash .riddim-release/scripts/runner/fetch_distribution_cert.sh
 
       - name: Create ephemeral keychain
-        if: ${{ !inputs.dry_run }}
         env:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh create
-
-      - name: Dry-run build/upload summary
-        if: ${{ inputs.dry_run }}
-        run: |
-          echo "Dry run: computed version ${{ needs.compute-version.outputs.next_version }}."
-          echo "Dry run: skipped signing, archive, TestFlight upload, dSYM upload, and keychain setup."
 
       - name: Build and upload to TestFlight
         if: ${{ !inputs.dry_run }}
@@ -225,7 +211,7 @@ jobs:
             ${{ inputs.ios_workdir }}/build/${{ inputs.scheme }}.xcarchive
 
       - name: Delete ephemeral keychain
-        if: ${{ always() && !inputs.dry_run }}
+        if: always()
         run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh cleanup
 
   # ─── Job 3: Create draft GitHub Release ─────────────────────────────────────

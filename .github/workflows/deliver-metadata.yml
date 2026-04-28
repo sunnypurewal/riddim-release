@@ -38,9 +38,6 @@ concurrency:
   group: deliver-metadata
   cancel-in-progress: true
 
-env:
-  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
-
 jobs:
   deliver:
     name: Push metadata to App Store Connect
@@ -54,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sunnypurewal/riddim-release
-          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          ref: ${{ env.RIDDIM_RELEASE_REF || 'v1' }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC
