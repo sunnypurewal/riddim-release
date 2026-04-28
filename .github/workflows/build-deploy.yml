@@ -66,6 +66,12 @@ on:
         required: false
       SENTRY_PROJECT:
         required: false
+      SLACK_RELEASES_WEBHOOK:
+        required: false
+        description: >-
+          Slack Incoming Webhook URL. When set, the workflow posts a "build
+          ready for QA" message after the draft GitHub Release is created.
+          When unset, the notification step logs a skip line and continues.
 
 permissions:
   contents: write   # create draft GitHub Release
@@ -263,3 +269,31 @@ jobs:
             --notes-file /tmp/release_notes.txt \
             --draft \
             --target "${{ github.sha }}"
+
+      # Slack-only notification — covers the operator-UX gap when a repo
+      # cannot attach required reviewers to the app-store-release Environment
+      # (e.g. private repo on Free plan). The webhook secret is optional; when
+      # unset, this step logs a skip and continues.
+      - name: Notify draft release ready for QA
+        env:
+          SLACK_RELEASES_WEBHOOK: ${{ secrets.SLACK_RELEASES_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SLACK_RELEASES_WEBHOOK:-}" ]]; then
+            echo "SLACK_RELEASES_WEBHOOK not configured — skipping draft-release notification."
+            exit 0
+          fi
+          VERSION="${{ needs.compute-version.outputs.next_version }}"
+          BUILD_NUMBER="${{ needs.build-upload.outputs.build_number }}"
+          REPO="${{ github.repository }}"
+          APP_ID="${{ inputs.apple_app_id }}"
+          RELEASE_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
+          TF_URL="https://appstoreconnect.apple.com/apps/${APP_ID}/testflight/ios"
+          text=$(printf ':package: *New build ready for QA* — `%s` v%s (build %s)\n\n• Draft Release: %s\n• TestFlight: %s\n\nClick *Publish* on the draft Release once QA passes — that fires release-app-store.yml and submits to App Store review.' \
+            "$REPO" "$VERSION" "$BUILD_NUMBER" "$RELEASE_URL" "$TF_URL")
+          payload=$(jq -nc --arg text "$text" '{text: $text}')
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$SLACK_RELEASES_WEBHOOK" \
+            -o /dev/null
+          echo "Posted draft-release notification to Slack."

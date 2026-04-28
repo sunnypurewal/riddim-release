@@ -378,6 +378,39 @@ The submit job uploads metadata/screenshots, attaches the matching TestFlight
 build, submits for App Store review, sets `automatic_release:false`, and enables
 phased release.
 
+## 6. Notifications (optional)
+
+`build-deploy.yml` posts a "new build ready for QA" Slack message immediately
+after the draft GitHub Release is created. This is the operator-UX equivalent
+of the GitHub "Approve deployment" notification that fires when an
+Environment has required reviewers — useful for repos that cannot attach
+required reviewers to `app-store-release` (e.g. private repo on Free plan).
+
+### Mint an Incoming Webhook
+
+1. Slack → your workspace → *Apps* → *Incoming WebHooks*.
+2. Pick the channel that should receive build notifications (e.g.
+   `#releases`).
+3. Copy the webhook URL.
+
+### Set the secret
+
+```bash
+gh secret set SLACK_RELEASES_WEBHOOK --repo "$GH_REPO" --body "https://hooks.slack.com/services/..."
+```
+
+Make sure the consuming repo's shim forwards secrets — `secrets: inherit` in
+`.github/workflows/build-deploy.yml` is the simplest form. If the shim names
+secrets explicitly, add `SLACK_RELEASES_WEBHOOK: ${{ secrets.SLACK_RELEASES_WEBHOOK }}`.
+
+When the webhook secret is **unset**, the notify step logs a skip line and
+the workflow continues — no setup is required to opt out.
+
+The message contains the repo, version, build number, a link to the draft
+GitHub Release, a link to the app's TestFlight page in App Store Connect,
+and a reminder that publishing the draft Release fires
+`release-app-store.yml`.
+
 ## Related Docs
 
 - [runner-setup.md](runner-setup.md)
