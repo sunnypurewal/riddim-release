@@ -1,0 +1,6 @@
+# riddim-release template - copy to .github/CODEOWNERS and adjust
+ios/fastlane/metadata/* @sunnypurewal
+ios/fastlane/screenshots/* @sunnypurewal
+ios/fastlane/app-previews/* @sunnypurewal
+release/* @sunnypurewal
+scripts/release/* @sunnypurewal

@@ -1,0 +1,2 @@
+# riddim-release template - copy to ios/Gemfile and adjust
+gem "fastlane"

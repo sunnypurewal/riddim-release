@@ -1,0 +1,15 @@
+# riddim-release template - render to ios/fastlane/Snapfile and adjust
+devices([
+  "iPhone 16 Pro Max",
+  "iPhone 16",
+])
+
+languages(["<%= primary_locale %>"])
+
+scheme("<%= scheme %>")
+
+output_directory("./fastlane/screenshots")
+output_files("png")
+
+clear_previous_screenshots(true)
+stop_after_first_error(true)
