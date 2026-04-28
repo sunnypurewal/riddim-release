@@ -297,9 +297,9 @@ jobs:
           APP_ID="${{ inputs.apple_app_id }}"
           RELEASE_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
           TF_URL="https://appstoreconnect.apple.com/apps/${APP_ID}/testflight/ios"
-          text=$(printf ':package: *New build ready for QA* — `%s` v%s (build %s)\n\n• Draft Release: %s\n• TestFlight: %s\n\nClick *Publish* on the draft Release once QA passes — that fires release-app-store.yml and submits to App Store review.' \
+          text=$(printf ":package: *New build ready for QA* — \`%s\` v%s (build %s)\n\n• Draft Release: %s\n• TestFlight: %s\n\nClick *Publish* on the draft Release once QA passes — that fires release-app-store.yml and submits to App Store review." \
             "$REPO" "$VERSION" "$BUILD_NUMBER" "$RELEASE_URL" "$TF_URL")
-          payload=$(jq -nc --arg text "$text" '{text: $text}')
+          payload=$(jq -nc --arg text "$text" "{text: \$text}")
           curl -fsS -X POST -H 'Content-Type: application/json' \
             --data "$payload" \
             "$SLACK_RELEASES_WEBHOOK" \
