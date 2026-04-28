@@ -50,12 +50,15 @@ platform :ios do
     )
 
     sentry_dsn = ENV.fetch("SENTRY_DSN", "")
+    xcargs = "DEVELOPMENT_TEAM=#{team_id} CURRENT_PROJECT_VERSION=#{next_build} SENTRY_DSN=#{sentry_dsn}"
+    xcargs = "#{xcargs} MARKETING_VERSION=#{new_version}" unless new_version.empty?
+
     build_app(
       scheme:           scheme,
       configuration:    "Release",
       destination:      "generic/platform=iOS",
       export_method:    "app-store",
-      xcargs:           "DEVELOPMENT_TEAM=#{team_id} SENTRY_DSN=#{sentry_dsn}",
+      xcargs:           xcargs,
       output_directory: "build",
       output_name:      "#{scheme}.ipa",
       clean:            true
