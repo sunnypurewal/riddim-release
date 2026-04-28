@@ -1,0 +1,223 @@
+name: Reusable Release to App Store
+
+on:
+  workflow_call:
+    inputs:
+      apple_app_id:
+        required: true
+        type: string
+      bundle_id:
+        required: true
+        type: string
+      ios_workdir:
+        required: false
+        type: string
+        default: "ios"
+      primary_locale:
+        required: false
+        type: string
+        default: "en-US"
+      tag:
+        required: false
+        type: string
+        description: "Tag to submit (set on workflow_dispatch); on release event the tag comes from github.event.release.tag_name"
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+      approval_environment:
+        required: false
+        type: string
+        default: "app-store-release"
+      runner_labels_mac:
+        required: true
+        type: string
+      runner_labels_linux:
+        required: true
+        type: string
+    secrets:
+      AWS_RELEASE_ROLE_ARN:
+        required: true
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: app-store-release
+  cancel-in-progress: false
+
+env:
+  RIDDIM_RELEASE_REF: v1
+
+jobs:
+  find-build:
+    name: Find TestFlight build
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    outputs:
+      build_number: ${{ steps.find.outputs.build_number }}
+      build_version: ${{ steps.find.outputs.build_version }}
+      upload_time: ${{ steps.find.outputs.upload_time }}
+      tag: ${{ steps.resolve-tag.outputs.tag }}
+      version: ${{ steps.resolve-tag.outputs.version }}
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+
+      - name: Check out riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          path: .riddim-release
+
+      - name: Resolve tag and version
+        id: resolve-tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          if [[ -z "$TAG" ]]; then
+            echo "::error::No release tag found. Publish a GitHub Release or pass the tag input."
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Fetch App Store Connect credentials
+        run: .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r .riddim-release/scripts/release/requirements.txt --quiet
+
+      - name: Find build matching release version
+        id: find
+        shell: bash
+        env:
+          VERSION: ${{ steps.resolve-tag.outputs.version }}
+        run: |
+          set +e
+          python3 .riddim-release/scripts/release/find_qualifying_build.py \
+            --key-id "$ASC_KEY_ID" \
+            --issuer-id "$ASC_ISSUER_ID" \
+            --private-key-path "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            --app-id "${{ inputs.apple_app_id }}" \
+            --latest \
+            --version "$VERSION" \
+            --output-format github-output 2> /tmp/find-build.err
+          status=$?
+          set -e
+
+          if [[ "$status" -ne 0 ]]; then
+            echo "::error::No TestFlight build found for version $VERSION. Check that build-deploy.yml ran for this version."
+            cat /tmp/find-build.err
+            exit "$status"
+          fi
+
+  approve-release:
+    name: Approve release
+    needs: find-build
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    environment: ${{ inputs.approval_environment }}
+    steps:
+      - name: Release candidate summary
+        run: |
+          echo "## Release candidate ready for approval"
+          echo ""
+          echo "- Version: ${{ needs.find-build.outputs.build_version }}"
+          echo "- Build: #${{ needs.find-build.outputs.build_number }}"
+          echo "- Tag: ${{ needs.find-build.outputs.tag }}"
+          echo "- Uploaded: ${{ needs.find-build.outputs.upload_time }}"
+          echo "- Dry run: ${{ inputs.dry_run }}"
+          echo ""
+          echo "Approve this deployment to submit to App Store review."
+
+  submit:
+    name: Submit for App Store review
+    needs:
+      - find-build
+      - approve-release
+    if: ${{ !inputs.dry_run }}
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+
+      - name: Check out riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          path: .riddim-release
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Fetch App Store Connect credentials
+        run: .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Set up Ruby and Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Write release notes from GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_PATH: ${{ inputs.ios_workdir }}/fastlane/metadata/${{ inputs.primary_locale }}/release_notes.txt
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RELEASE_NOTES_PATH")"
+          gh release view "${{ needs.find-build.outputs.tag }}" \
+            --json body --jq '.body' \
+            > "$RELEASE_NOTES_PATH"
+
+      - name: Upload metadata and screenshots to App Store
+        working-directory: ${{ inputs.ios_workdir }}
+        run: |
+          bundle exec fastlane run deliver \
+            api_key_path:/tmp/asc_api_key.json \
+            app_identifier:${{ inputs.bundle_id }} \
+            skip_binary_upload:true \
+            skip_screenshots:false \
+            skip_metadata:false \
+            submit_for_review:false \
+            force:true
+
+      - name: Submit build for App Store review
+        working-directory: ${{ inputs.ios_workdir }}
+        run: |
+          bundle exec fastlane run deliver \
+            api_key_path:/tmp/asc_api_key.json \
+            app_identifier:${{ inputs.bundle_id }} \
+            skip_binary_upload:true \
+            skip_screenshots:true \
+            skip_metadata:true \
+            submit_for_review:true \
+            force:true \
+            phased_release:true \
+            automatic_release:false \
+            build_number:"${{ needs.find-build.outputs.build_number }}"
+
+      - name: Summary
+        run: |
+          echo "## App Store submission complete"
+          echo ""
+          echo "- Version: ${{ needs.find-build.outputs.build_version }}"
+          echo "- Build: #${{ needs.find-build.outputs.build_number }}"
+          echo "- Tag: ${{ needs.find-build.outputs.tag }}"
+          echo "- Status: Submitted for review"
+          echo "- Phased release: enabled"

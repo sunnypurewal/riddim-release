@@ -1,0 +1,27 @@
+name: Self Test Release App Store
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-app-store.yml"
+      - ".github/workflows/self-test-release-app-store.yml"
+      - "scripts/release/find_qualifying_build.py"
+      - "scripts/release/test_find_qualifying_build.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-app-store-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate release-app-store workflow syntax
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: .github/workflows/release-app-store.yml .github/workflows/self-test-release-app-store.yml
+
+      - name: Run mocked find-build fixture
+        run: python3 scripts/release/test_find_qualifying_build.py
