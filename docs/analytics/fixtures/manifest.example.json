@@ -113,6 +113,30 @@
       "schema_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/schema/sales/sales-summary.schema.json"
     },
     {
+      "artifact_id": "analytics-app-store-source-daily-2026-04-27",
+      "family": "analytics",
+      "category": "APP_STORE",
+      "type": "APP_STORE_SOURCE",
+      "subtype": null,
+      "granularity": "DAILY",
+      "requested_date": "2026-04-27",
+      "requested_window": null,
+      "request_id": "req-003",
+      "report_id": "report-003",
+      "instance_id": "inst-003",
+      "segment_id": null,
+      "download_url_source": "/v1/analyticsReports/report-003/relationships/instances",
+      "raw_path": null,
+      "downloaded_at": null,
+      "checksum_sha256": null,
+      "byte_count": null,
+      "row_count": null,
+      "status": "thresholded",
+      "status_reason": "Apple withheld source rows because the segment did not meet privacy thresholds.",
+      "normalized_path": null,
+      "schema_path": null
+    },
+    {
       "artifact_id": "finance-us-2026-04",
       "family": "finance",
       "category": "FINANCE",
@@ -148,6 +172,7 @@
     "row_count": 170,
     "caveats": [
       "APP_SESSIONS is delayed and must not be interpreted as zero sessions.",
+      "APP_STORE_SOURCE is privacy-thresholded and must not be interpreted as zero source activity.",
       "Finance reports are permission-blocked for this key."
     ]
   }
