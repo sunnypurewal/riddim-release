@@ -16,7 +16,7 @@ Copy `templates/workflows/budget-watcher.yml` into the consuming repo as
 
 ## What It Does
 
-Every six hours, and on manual `workflow_dispatch`, the watcher:
+Every hour, and on manual `workflow_dispatch`, the watcher:
 
 1. Calls the GitHub Actions billing endpoint for the repository owner.
 2. Computes `total_minutes_used / included_minutes * 100`.
@@ -96,7 +96,7 @@ runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
 The watcher flips to self-hosted at `>= 85%` of included Actions minutes.
 
 That leaves headroom for in-flight or already-queued jobs after the next
-six-hour poll and avoids waiting until the account is fully exhausted.
+hourly poll and avoids waiting until the account is fully exhausted.
 
 The watcher resets to hosted at `< 5%`.
 
