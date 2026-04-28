@@ -21,8 +21,24 @@ def analytics_family(config: dict[str, Any]) -> dict[str, Any]:
     return config.get("families", {}).get("analytics_reports") or config.get("families", {}).get("analytics") or {}
 
 
+def sales_family(config: dict[str, Any]) -> dict[str, Any]:
+    return config.get("families", {}).get("sales_trends") or config.get("families", {}).get("sales") or {}
+
+
+def finance_family(config: dict[str, Any]) -> dict[str, Any]:
+    return config.get("families", {}).get("finance") or {}
+
+
 def analytics_enabled(config: dict[str, Any]) -> bool:
     return bool(analytics_family(config).get("enabled", False))
+
+
+def sales_enabled(config: dict[str, Any]) -> bool:
+    return bool(sales_family(config).get("enabled", False))
+
+
+def finance_enabled(config: dict[str, Any]) -> bool:
+    return bool(finance_family(config).get("enabled", False))
 
 
 def analytics_request_type(family: dict[str, Any]) -> str:
@@ -34,4 +50,11 @@ def app_id(config: dict[str, Any]) -> str:
     value = app.get("app_id") or app.get("apple_app_id")
     if not value:
         raise SystemExit("Report catalog requires app.app_id.")
+    return str(value)
+
+
+def vendor_number(config: dict[str, Any], report: dict[str, Any]) -> str:
+    value = report.get("vendor_number") or config.get("app", {}).get("vendor_number")
+    if not value:
+        raise SystemExit("Report catalog requires app.vendor_number or report vendor_number.")
     return str(value)

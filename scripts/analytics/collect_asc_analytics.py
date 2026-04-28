@@ -16,21 +16,48 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.analytics.artifact import (
     atomic_write_bytes,
     artifact_root,
+    count_gzip_tsv_rows,
     existing_report,
     load_manifest,
     manifest_entry,
     sha256_bytes,
     slugify,
     upsert_report,
+    utc_now,
     write_json,
 )
 from scripts.analytics.asc_client import AscApiError, AscClient, get_asc_token
 from scripts.analytics.catalog import analytics_enabled, analytics_family, analytics_request_type, app_id, load_catalog
+from scripts.analytics.catalog import finance_enabled, finance_family, sales_enabled, sales_family, vendor_number
 
 
-def build_plan(config: dict[str, Any], report_date: str) -> list[dict[str, Any]]:
-    if not analytics_enabled(config):
-        return []
+SUPPORTED_FAMILIES = {"analytics", "sales", "finance"}
+
+
+def build_plan(config: dict[str, Any], report_date: str, families: set[str] | None = None) -> list[dict[str, Any]]:
+    selected = families or enabled_families(config)
+    plan: list[dict[str, Any]] = []
+    if "analytics" in selected:
+        plan.extend(build_analytics_plan(config, report_date))
+    if "sales" in selected:
+        plan.extend(build_sales_plan(config, report_date))
+    if "finance" in selected:
+        plan.extend(build_finance_plan(config, report_date))
+    return plan
+
+
+def enabled_families(config: dict[str, Any]) -> set[str]:
+    families: set[str] = set()
+    if analytics_enabled(config):
+        families.add("analytics")
+    if sales_enabled(config):
+        families.add("sales")
+    if finance_enabled(config):
+        families.add("finance")
+    return families
+
+
+def build_analytics_plan(config: dict[str, Any], report_date: str) -> list[dict[str, Any]]:
     family = analytics_family(config)
     plan: list[dict[str, Any]] = []
     for report in family.get("reports", []):
@@ -48,6 +75,22 @@ def build_plan(config: dict[str, Any], report_date: str) -> list[dict[str, Any]]
                     "status": "planned",
                 }
             )
+    return plan
+
+
+def build_sales_plan(config: dict[str, Any], report_date: str) -> list[dict[str, Any]]:
+    plan: list[dict[str, Any]] = []
+    for report in sales_family(config).get("reports", []):
+        params = sales_params(config, report, report_date)
+        plan.append({"family": "sales", "endpoint": "/v1/salesReports", "params": params, "status": "planned"})
+    return plan
+
+
+def build_finance_plan(config: dict[str, Any], report_date: str) -> list[dict[str, Any]]:
+    plan: list[dict[str, Any]] = []
+    for report in finance_family(config).get("reports", []):
+        params = finance_params(config, report, report_date)
+        plan.append({"family": "finance", "endpoint": "/v1/financeReports", "params": params, "status": "planned"})
     return plan
 
 
@@ -69,15 +112,13 @@ def collect(
     requested = (
         {item.strip() for item in args.families.split(",") if item.strip()}
         if args.families
-        else {"analytics"}
+        else enabled_families(config)
     )
-    if requested - {"analytics"}:
-        raise SystemExit(
-            "RIDDIM-59 supports only the Analytics Reports API family; "
-            "Sales/Finance are separate stories."
-        )
+    unsupported = requested - SUPPORTED_FAMILIES
+    if unsupported:
+        raise SystemExit(f"Unsupported report families: {', '.join(sorted(unsupported))}")
 
-    plan = build_plan(config, report_date)
+    plan = build_plan(config, report_date, requested)
     if args.dry_run:
         result = {"dry_run": True, "report_date": report_date, "plan": plan}
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -86,8 +127,12 @@ def collect(
     root = artifact_root(config, report_date)
     manifest = load_manifest(root, config, report_date)
     asc_client = client or require_client(args)
-    if analytics_enabled(config):
+    if "analytics" in requested and analytics_enabled(config):
         collect_analytics(config, asc_client, manifest, report_date, bool(args.create_requests))
+    if "sales" in requested and sales_enabled(config):
+        collect_sales(config, asc_client, manifest, report_date)
+    if "finance" in requested and finance_enabled(config):
+        collect_finance(config, asc_client, manifest, report_date)
     write_json(root / "manifest.json", manifest)
     return manifest
 
@@ -165,6 +210,163 @@ def collect_analytics(
                 status_reason=str(exc),
             ),
         )
+
+
+def collect_sales(
+    config: dict[str, Any],
+    client: AscClient,
+    manifest: dict[str, Any],
+    report_date: str,
+) -> None:
+    for report in sales_family(config).get("reports", []):
+        params = sales_params(config, report, report_date)
+        artifact_id = slugify(f"sales-{params['filter[frequency]']}-{params['filter[reportDate]']}-"
+                              f"{params['filter[reportType]']}-{params['filter[reportSubType]']}")
+        raw_path = endpoint_raw_path(config, report_date, "sales", artifact_id)
+        entry = manifest_entry(
+            config,
+            artifact_id=artifact_id,
+            family="sales",
+            category="SALES_AND_TRENDS",
+            report_type=params["filter[reportType]"],
+            subtype=params["filter[reportSubType]"],
+            granularity=params["filter[frequency]"],
+            requested_date=params["filter[reportDate]"],
+            requested_window=None,
+            request_id=None,
+            report_id=None,
+            instance_id=None,
+            segment_id=None,
+            download_url_source="/v1/salesReports",
+            raw_path=None,
+            status="planned",
+            status_reason=None,
+        )
+        collect_endpoint_report(client, manifest, artifact_id, raw_path, "/v1/salesReports", params, entry)
+
+
+def collect_finance(
+    config: dict[str, Any],
+    client: AscClient,
+    manifest: dict[str, Any],
+    report_date: str,
+) -> None:
+    for report in finance_family(config).get("reports", []):
+        params = finance_params(config, report, report_date)
+        artifact_id = slugify(f"finance-{params['filter[regionCode]']}-{params['filter[reportDate]']}-"
+                              f"{params['filter[reportType]']}")
+        raw_path = endpoint_raw_path(config, report_date, "finance", artifact_id)
+        entry = manifest_entry(
+            config,
+            artifact_id=artifact_id,
+            family="finance",
+            category="FINANCE",
+            report_type=params["filter[reportType]"],
+            subtype=None,
+            granularity="MONTHLY",
+            requested_date=None,
+            requested_window={
+                "fiscal_period": params["filter[reportDate]"],
+                "region": params["filter[regionCode]"],
+            },
+            request_id=None,
+            report_id=None,
+            instance_id=None,
+            segment_id=None,
+            download_url_source="/v1/financeReports",
+            raw_path=None,
+            status="planned",
+            status_reason=None,
+        )
+        collect_endpoint_report(client, manifest, artifact_id, raw_path, "/v1/financeReports", params, entry)
+
+
+def sales_params(config: dict[str, Any], report: dict[str, Any], report_date: str) -> dict[str, str]:
+    return {
+        "filter[frequency]": str(report.get("frequency", "DAILY")),
+        "filter[reportDate]": str(report.get("report_date") or report_date),
+        "filter[reportSubType]": str(report.get("report_subtype", "SUMMARY")),
+        "filter[reportType]": str(report.get("report_type", "SALES")),
+        "filter[vendorNumber]": vendor_number(config, report),
+        "filter[version]": str(report.get("version", "1_0")),
+    }
+
+
+def finance_params(config: dict[str, Any], report: dict[str, Any], report_date: str) -> dict[str, str]:
+    required = {
+        "region_code": report.get("region_code"),
+        "report_date": report.get("report_date") or report_date[:7],
+        "report_type": report.get("report_type", "FINANCIAL"),
+        "vendor_number": vendor_number(config, report),
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        raise SystemExit(f"Finance report config missing required fields: {', '.join(missing)}")
+    return {
+        "filter[regionCode]": str(required["region_code"]),
+        "filter[reportDate]": str(required["report_date"]),
+        "filter[reportType]": str(required["report_type"]),
+        "filter[vendorNumber]": str(required["vendor_number"]),
+    }
+
+
+def endpoint_raw_path(config: dict[str, Any], report_date: str, family: str, artifact_id: str) -> Path:
+    return artifact_root(config, report_date) / "raw" / family / f"{artifact_id}.txt.gz"
+
+
+def collect_endpoint_report(
+    client: AscClient,
+    manifest: dict[str, Any],
+    artifact_id: str,
+    raw_path: Path,
+    endpoint: str,
+    params: dict[str, str],
+    entry: dict[str, Any],
+) -> None:
+    try:
+        status = write_endpoint_report_once(client, manifest, artifact_id, raw_path, endpoint, params)
+        upsert_report(manifest, {**entry, **manifest_entry_from_raw(entry, raw_path, status)})
+    except AscApiError as exc:
+        upsert_report(manifest, {**entry, "status": exc.manifest_status, "status_reason": str(exc)})
+
+
+def write_endpoint_report_once(
+    client: AscClient,
+    manifest: dict[str, Any],
+    artifact_id: str,
+    raw_path: Path,
+    endpoint: str,
+    params: dict[str, str],
+) -> str:
+    existing = existing_report(manifest, artifact_id)
+    if raw_path.exists():
+        checksum = sha256_bytes(raw_path.read_bytes())
+        recorded_checksum = existing.get("checksum_sha256") if existing else None
+        if recorded_checksum and checksum != recorded_checksum:
+            raise RuntimeError(
+                f"Existing raw report checksum mismatch for {raw_path}; "
+                "refusing to rewrite immutable raw file."
+            )
+        return "unchanged"
+    response = client.request("GET", endpoint, params=params)
+    data = response.content
+    downloaded_checksum = sha256_bytes(data)
+    if existing and existing.get("checksum_sha256") and existing["checksum_sha256"] != downloaded_checksum:
+        raise RuntimeError(f"Downloaded report checksum changed for {artifact_id}; refusing to overwrite raw file.")
+    atomic_write_bytes(raw_path, data)
+    return "downloaded"
+
+
+def manifest_entry_from_raw(entry: dict[str, Any], raw_path: Path, status: str) -> dict[str, Any]:
+    return {
+        "raw_path": str(raw_path),
+        "downloaded_at": utc_now(),
+        "checksum_sha256": sha256_bytes(raw_path.read_bytes()),
+        "byte_count": raw_path.stat().st_size,
+        "row_count": count_gzip_tsv_rows(raw_path),
+        "status": status,
+        "status_reason": None,
+    }
 
 
 def find_report_request(client: AscClient, application_id: str, request_type: str) -> dict[str, Any] | None:
@@ -422,10 +624,14 @@ def instance_state_status(attrs: dict[str, Any]) -> tuple[str, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Collect App Store Connect Analytics Reports API artifacts.")
+    parser = argparse.ArgumentParser(description="Collect App Store Connect report artifacts.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--report-date", default="")
-    parser.add_argument("--families", default="analytics", help="Only analytics is supported in RIDDIM-59.")
+    parser.add_argument(
+        "--families",
+        default="",
+        help="Comma-separated subset: analytics,sales,finance. Defaults to all enabled families.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--create-requests",
