@@ -1,0 +1,41 @@
+name: Self-test (internal smoke)
+
+# Internal smoke test for build-deploy.yml. Requires repo secrets:
+#   AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD
+# and repo variables:
+#   RUNNER_LABELS_MAC (e.g. '["macos-15"]'), RUNNER_LABELS_LINUX (e.g. '["ubuntu-latest"]')
+#
+# Run with dry_run: true — the DAG executes in order but skips TestFlight upload
+# and draft release creation, so no App Store side-effects occur.
+# Not callable externally (no workflow_call trigger).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: false
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      apple_app_id:
+        description: 'App Store Connect App ID to use for version lookup'
+        required: false
+        type: string
+        default: '1224459142'   # epac fixture — safe for version-compute smoke
+
+jobs:
+  smoke:
+    uses: ./.github/workflows/build-deploy.yml
+    with:
+      apple_app_id:     ${{ inputs.apple_app_id }}
+      bundle_id:        net.dinglebox.cabinetdoor
+      team_id:          ZG82TFXU3C
+      scheme:           epac
+      xcodeproj_path:   ios/epac.xcodeproj
+      ios_workdir:      ios
+      bump:             ${{ inputs.bump }}
+      dry_run:          true
+      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC   || '["macos-15"]' }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+    secrets: inherit
