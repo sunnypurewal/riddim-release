@@ -1,10 +1,10 @@
 name: Self-test (internal smoke)
 
 # Internal smoke test for build-deploy.yml. Requires repo secrets:
-#   AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD
+#   AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD, RIDDIM_ACTIONS_APP_PRIVATE_KEY
 # and repo variables:
 #   RUNNER_LABELS_MAC (e.g. '["macos-15"]'), RUNNER_LABELS_LINUX (e.g. '["ubuntu-latest"]')
-#   RIDDIM_RELEASE_REF (optional; use "main" before the v1 tag exists)
+#   RIDDIM_ACTIONS_APP_CLIENT_ID, RIDDIM_RELEASE_REF (optional; use "main" before the v1 tag exists)
 #
 # Run with dry_run: true - the DAG executes version computation and reusable
 # workflow wiring but skips signing, archive, TestFlight upload, dSYM upload,
@@ -35,6 +35,7 @@ jobs:
     uses: ./.github/workflows/build-deploy.yml
     with:
       apple_app_id:     ${{ inputs.apple_app_id }}
+      riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
       bundle_id:        net.dinglebox.cabinetdoor
       team_id:          ZG82TFXU3C
       scheme:           epac
@@ -44,4 +45,7 @@ jobs:
       dry_run:          true
       runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC   || '["macos-15"]' }}
       runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
-    secrets: inherit
+    secrets:
+      AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}

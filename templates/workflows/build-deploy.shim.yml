@@ -1,8 +1,8 @@
 # riddim-release template - copy to .github/workflows/build-deploy.yml and adjust
 # Requires repo variables: APPLE_APP_ID, BUNDLE_ID, TEAM_ID, SCHEME, XCODEPROJ_PATH,
-#   RUNNER_LABELS_MAC, RUNNER_LABELS_LINUX, PRIMARY_LOCALE
+#   RUNNER_LABELS_MAC, RUNNER_LABELS_LINUX, PRIMARY_LOCALE, RIDDIM_ACTIONS_APP_CLIENT_ID
 # Optional variables: IOS_WORKDIR (default: ios), EXTRA_BUNDLE_IDS
-# Secrets (via secrets: inherit): AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD, optional SENTRY_*
+# Secrets: AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD, RIDDIM_ACTIONS_APP_PRIVATE_KEY, optional SENTRY_*
 name: Create Release
 on:
   workflow_dispatch:
@@ -23,6 +23,7 @@ jobs:
   call:
     uses: RiddimSoftware/riddim-release/.github/workflows/build-deploy.yml@v1
     with:
+      riddim_actions_app_client_id: ${{ vars.RIDDIM_ACTIONS_APP_CLIENT_ID }}
       apple_app_id:        ${{ vars.APPLE_APP_ID }}
       bundle_id:           ${{ vars.BUNDLE_ID }}
       team_id:             ${{ vars.TEAM_ID }}
@@ -36,4 +37,12 @@ jobs:
       runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
       extra_bundle_ids:    ${{ vars.EXTRA_BUNDLE_IDS || '' }}
       has_app_clip:        ${{ vars.HAS_APP_CLIP == 'true' }}
-    secrets: inherit
+    secrets:
+      AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      riddim_actions_app_private_key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+      SLACK_RELEASES_WEBHOOK: ${{ secrets.SLACK_RELEASES_WEBHOOK }}

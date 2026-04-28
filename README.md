@@ -22,6 +22,11 @@ Sister to [`evidence`](https://github.com/RiddimSoftware/evidence) and [`autopil
 
 See `docs/adopt.md` for the full onboarding guide. Short version: each app repo gets workflow shims, a fastlane scaffold, per-locale metadata files, screenshots, and an analytics report catalog — then `gh workflow run build-deploy.yml` cuts a TestFlight build, a published GitHub Release submits to ASC, edits to `ios/fastlane/metadata/**` push to ASC, and `collect-asc-analytics.yml` collects raw/normalized ASC evidence.
 
+Because this repo is private, caller shims pass the org-level
+`RIDDIM_ACTIONS_APP_CLIENT_ID` variable and
+`RIDDIM_ACTIONS_APP_PRIVATE_KEY` secret explicitly so the reusable workflows can
+mint a read-only checkout token for `RiddimSoftware/riddim-release`.
+
 ## Layout
 
 ```
