@@ -1,27 +1,107 @@
 # riddim-release template - copy to .github/workflows/budget-watcher.yml and adjust
 #
-# PLACEHOLDER - full implementation is tracked in RIDDIM Epic 3 (budget-aware runner selection).
-# When implemented, this workflow will monitor GitHub Actions billing usage and automatically
-# flip RUNNER_LABELS_MAC / RUNNER_LABELS_LINUX between hosted and self-hosted runner labels
-# when usage exceeds 85% of the monthly included minutes.
+# Polls user-account GitHub Actions billing usage and flips runner variables:
+# - hosted:      RUNNER_LABELS_MAC='["macos-15"]', RUNNER_LABELS_LINUX='["ubuntu-latest"]'
+# - self-hosted: RUNNER_LABELS_MAC='["self-hosted","macOS"]', RUNNER_LABELS_LINUX='["self-hosted","macOS"]'
 #
-# Required repo secret (when implemented): RUNNER_BUDGET_PAT
-#   Scopes: read:user, read:billing, repo
-#
-# See RIDDIM-54 for the full budget-watcher workflow implementation.
+# Required repo secret: RUNNER_BUDGET_PAT
+# Scopes: read:user, read:billing, repo
 name: Runner Budget Watcher
 
 on:
+  schedule:
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
-  placeholder:
-    name: Placeholder
+  watch:
+    name: Watch GitHub Actions budget
     runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
     steps:
-      - name: Not implemented yet
+      - name: Query billing
+        id: billing
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
+          OWNER: ${{ github.repository_owner }}
         run: |
-          echo "Budget watcher implementation is tracked in RIDDIM-54."
+          set -euo pipefail
+
+          billing_json="$(gh api "/users/${OWNER}/settings/billing/actions")"
+
+          total_minutes_used="$(
+            jq -r '.total_minutes_used // 0' <<< "$billing_json"
+          )"
+          included_minutes="$(
+            jq -r '.included_minutes // 0' <<< "$billing_json"
+          )"
+
+          pct="$(
+            jq -rn \
+              --argjson total "$total_minutes_used" \
+              --argjson included "$included_minutes" \
+              'if $included <= 0 then 100 else (($total / $included) * 100) end'
+          )"
+
+          {
+            printf 'total_minutes_used=%s\n' "$total_minutes_used"
+            printf 'included_minutes=%s\n' "$included_minutes"
+            printf 'pct=%.2f\n' "$pct"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Flip to self-hosted if over 85%
+        if: ${{ fromJSON(steps.billing.outputs.pct) >= 85 && vars.RUNNER_PROFILE != 'self-hosted' }}
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh variable set RUNNER_PROFILE \
+            --repo "$REPO" \
+            --body 'self-hosted'
+          gh variable set RUNNER_LABELS_MAC \
+            --repo "$REPO" \
+            --body '["self-hosted","macOS"]'
+          gh variable set RUNNER_LABELS_LINUX \
+            --repo "$REPO" \
+            --body '["self-hosted","macOS"]'
+
+      - name: Reset to hosted at start of new cycle
+        if: ${{ fromJSON(steps.billing.outputs.pct) < 5 && vars.RUNNER_PROFILE == 'self-hosted' }}
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh variable set RUNNER_PROFILE \
+            --repo "$REPO" \
+            --body 'hosted'
+          gh variable set RUNNER_LABELS_MAC \
+            --repo "$REPO" \
+            --body '["macos-15"]'
+          gh variable set RUNNER_LABELS_LINUX \
+            --repo "$REPO" \
+            --body '["ubuntu-latest"]'
+
+      - name: Summary
+        env:
+          CURRENT_PROFILE: ${{ vars.RUNNER_PROFILE || 'unset' }}
+          CURRENT_MAC_LABELS: ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
+          CURRENT_LINUX_LABELS: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+        run: |
+          {
+            echo "## Runner budget watcher"
+            echo ""
+            echo "- Usage: ${{ steps.billing.outputs.total_minutes_used }} / ${{ steps.billing.outputs.included_minutes }} included minutes"
+            echo "- Usage percent: ${{ steps.billing.outputs.pct }}%"
+            echo "- Runner profile before watcher: $CURRENT_PROFILE"
+            echo "- macOS labels before watcher: $CURRENT_MAC_LABELS"
+            echo "- Linux labels before watcher: $CURRENT_LINUX_LABELS"
+            echo ""
+            echo "Thresholds: flip to self-hosted at >= 85%; reset to hosted below 5%."
+          } >> "$GITHUB_STEP_SUMMARY"
