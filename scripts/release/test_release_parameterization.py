@@ -44,7 +44,24 @@ class GenerateReleaseNotesTests(unittest.TestCase):
                 "What's new in this release:\n\n• Ship the thing\n",
             )
 
-    def test_writes_fallback_notes_when_no_pr_notes_exist(self):
+    def test_writes_fallback_when_no_release_notes_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "metadata" / "release_notes.txt"
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    ["generate_release_notes.py", "--output", str(output)],
+                ),
+                mock.patch.object(generate_release_notes, "get_last_release_tag", return_value="v1.0.0"),
+                mock.patch.object(generate_release_notes, "get_merged_pr_numbers", return_value=[]),
+                redirect_stdout(StringIO()),
+            ):
+                generate_release_notes.main()
+
+            self.assertEqual(output.read_text(), "Release notes unavailable.\n")
+
+    def test_writes_fallback_when_merged_prs_have_no_release_notes(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "metadata" / "release_notes.txt"
             with (
@@ -64,10 +81,7 @@ class GenerateReleaseNotesTests(unittest.TestCase):
             ):
                 generate_release_notes.main()
 
-            self.assertEqual(
-                output.read_text(),
-                "What's new in this release:\n\n- Maintenance and stability improvements.\n",
-            )
+            self.assertEqual(output.read_text(), "Release notes unavailable.\n")
 
 
 class VerifyEvidenceTests(unittest.TestCase):
