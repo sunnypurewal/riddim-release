@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.analytics.artifact import artifact_root, load_json
 from scripts.analytics.asc_client import AscApiError
-from scripts.analytics.collect_asc_analytics import build_plan, collect, report_matches
+from scripts.analytics.collect_asc_analytics import build_plan, collect, finance_params, report_matches, sales_params
 
 
 def gz_bytes(text: str) -> bytes:
@@ -294,6 +294,24 @@ class AnalyticsCollectorTests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 build_plan(config, "2026-04-27", {"finance"})
+
+    def test_sales_and_finance_params_accept_family_level_catalog_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            del config["app"]["vendor_number"]
+            config["families"]["sales_trends"]["vendor_number"] = "sales-family-vendor"
+            config["families"]["finance"]["vendor_number"] = "finance-family-vendor"
+            finance_report = config["families"]["finance"]["reports"][0]
+            finance_report["region"] = finance_report.pop("region_code")
+            finance_report["fiscal_period"] = "2026-03"
+
+            sales = sales_params(config, config["families"]["sales_trends"]["reports"][0], "2026-04-27")
+            finance = finance_params(config, finance_report, "2026-04-27")
+
+            self.assertEqual(sales["filter[vendorNumber]"], "sales-family-vendor")
+            self.assertEqual(finance["filter[vendorNumber]"], "finance-family-vendor")
+            self.assertEqual(finance["filter[regionCode]"], "US")
+            self.assertEqual(finance["filter[reportDate]"], "2026-03")
 
 
 if __name__ == "__main__":

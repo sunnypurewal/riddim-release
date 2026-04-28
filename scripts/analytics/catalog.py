@@ -53,8 +53,12 @@ def app_id(config: dict[str, Any]) -> str:
     return str(value)
 
 
-def vendor_number(config: dict[str, Any], report: dict[str, Any]) -> str:
-    value = report.get("vendor_number") or config.get("app", {}).get("vendor_number")
+def vendor_number(config: dict[str, Any], report: dict[str, Any], family: dict[str, Any] | None = None) -> str:
+    value = (
+        report.get("vendor_number")
+        or (family or {}).get("vendor_number")
+        or config.get("app", {}).get("vendor_number")
+    )
     if not value:
-        raise SystemExit("Report catalog requires app.vendor_number or report vendor_number.")
+        raise SystemExit("Report catalog requires app.vendor_number, family vendor_number, or report vendor_number.")
     return str(value)

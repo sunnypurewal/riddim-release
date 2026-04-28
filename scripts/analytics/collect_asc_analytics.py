@@ -282,22 +282,24 @@ def collect_finance(
 
 
 def sales_params(config: dict[str, Any], report: dict[str, Any], report_date: str) -> dict[str, str]:
+    family = sales_family(config)
     return {
         "filter[frequency]": str(report.get("frequency", "DAILY")),
         "filter[reportDate]": str(report.get("report_date") or report_date),
         "filter[reportSubType]": str(report.get("report_subtype", "SUMMARY")),
         "filter[reportType]": str(report.get("report_type", "SALES")),
-        "filter[vendorNumber]": vendor_number(config, report),
+        "filter[vendorNumber]": vendor_number(config, report, family),
         "filter[version]": str(report.get("version", "1_0")),
     }
 
 
 def finance_params(config: dict[str, Any], report: dict[str, Any], report_date: str) -> dict[str, str]:
+    family = finance_family(config)
     required = {
-        "region_code": report.get("region_code"),
-        "report_date": report.get("report_date") or report_date[:7],
+        "region_code": report.get("region_code") or report.get("region"),
+        "report_date": report.get("report_date") or report.get("fiscal_period") or report_date[:7],
         "report_type": report.get("report_type", "FINANCIAL"),
-        "vendor_number": vendor_number(config, report),
+        "vendor_number": vendor_number(config, report, family),
     }
     missing = [key for key, value in required.items() if not value]
     if missing:
