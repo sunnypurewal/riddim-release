@@ -28,6 +28,15 @@ gh auth login
 aws sts get-caller-identity
 ```
 
+The App Store Connect lookup snippets below use Python packages that are not in
+the standard library. Install them in a disposable setup virtual environment:
+
+```bash
+python3 -m venv "$HOME/.venvs/riddim-release-setup"
+. "$HOME/.venvs/riddim-release-setup/bin/activate"
+python3 -m pip install --upgrade pip PyJWT requests cryptography
+```
+
 Set these shell variables before running the examples:
 
 ```bash
@@ -183,14 +192,16 @@ Add required reviewers in GitHub UI:
 From the consuming repo root:
 
 ```bash
+export RIDDIM_RELEASE_REF=v1
+
 mkdir -p .github/workflows "$IOS_WORKDIR/fastlane"
-curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/build-deploy.shim.yml \
+curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/build-deploy.shim.yml" \
   -o .github/workflows/build-deploy.yml
-curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/release-app-store.shim.yml \
+curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/release-app-store.shim.yml" \
   -o .github/workflows/release-app-store.yml
-curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/deliver-metadata.shim.yml \
+curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/deliver-metadata.shim.yml" \
   -o .github/workflows/deliver-metadata.yml
-curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/budget-watcher.yml \
+curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/budget-watcher.yml" \
   -o .github/workflows/budget-watcher.yml
 ```
 
@@ -198,10 +209,14 @@ Copy the fastlane scaffold:
 
 ```bash
 for file in Fastfile Appfile.erb Deliverfile.erb Snapfile.erb Pluginfile Gemfile; do
-  curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/fastlane/$file" \
+  curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/fastlane/$file" \
     -o "$IOS_WORKDIR/fastlane/$file"
 done
 ```
+
+Use `RIDDIM_RELEASE_REF=v1` for production adoption after the v1 tag is cut. For
+pre-v1 fixture validation, set it to the reviewed commit SHA that contains the
+template directory.
 
 Render the ERB placeholders:
 
