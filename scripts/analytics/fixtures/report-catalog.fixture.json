@@ -5,7 +5,8 @@
     "bundle_id": "com.riddim.fixture",
     "app_slug": "fixture-app",
     "provider_id": "123456",
-    "team_id": "ZG82TFXU3C"
+    "team_id": "ZG82TFXU3C",
+    "vendor_number": "87654321"
   },
   "output": {
     "root": "docs/analytics/app-store-connect/fixture-app",
@@ -46,12 +47,24 @@
       ]
     },
     "sales_trends": {
-      "enabled": false,
-      "reports": []
+      "enabled": true,
+      "reports": [
+        {
+          "frequency": "DAILY",
+          "report_type": "SALES",
+          "report_subtype": "SUMMARY",
+          "version": "1_0"
+        }
+      ]
     },
     "finance": {
-      "enabled": false,
-      "reports": []
+      "enabled": true,
+      "reports": [
+        {
+          "region_code": "US",
+          "report_type": "FINANCIAL"
+        }
+      ]
     }
   }
 }

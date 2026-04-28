@@ -7,12 +7,13 @@ import unittest
 from contextlib import redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.analytics.artifact import artifact_root, load_json
 from scripts.analytics.asc_client import AscApiError
-from scripts.analytics.collect_asc_analytics import build_plan, collect, report_matches
+from scripts.analytics.collect_asc_analytics import build_plan, collect, finance_params, report_matches, sales_params
 
 
 def gz_bytes(text: str) -> bytes:
@@ -44,6 +45,7 @@ class FakeAscClient:
         self.download_count = 0
         self.created_payloads = []
         self.paged_requests = []
+        self.report_requests_seen = []
 
     def paged_get(self, path, params=None):
         self.paged_requests.append((path, params or {}))
@@ -82,15 +84,29 @@ class FakeAscClient:
         self.download_count += 1
         return self.data
 
+    def request(self, method, path, params=None):
+        self.report_requests_seen.append((method, path, params or {}))
+        if path in self.fail_paths:
+            raise self.fail_paths[path]
+        return SimpleNamespace(content=self.data)
+
 
 class AnalyticsCollectorTests(unittest.TestCase):
     def test_dry_run_plan_lists_report_requests(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = fixture_config(Path(tmp))
             plan = build_plan(config, "2026-04-27")
+            families = {item["family"] for item in plan}
+            self.assertEqual(families, {"analytics", "sales", "finance"})
             self.assertEqual(plan[0]["family"], "analytics")
             self.assertEqual(plan[0]["request_type"], "ONGOING")
             self.assertEqual(plan[0]["status"], "planned")
+            sales = next(item for item in plan if item["family"] == "sales")
+            finance = next(item for item in plan if item["family"] == "finance")
+            self.assertEqual(sales["endpoint"], "/v1/salesReports")
+            self.assertEqual(sales["params"]["filter[vendorNumber]"], "87654321")
+            self.assertEqual(finance["endpoint"], "/v1/financeReports")
+            self.assertEqual(finance["params"]["filter[regionCode]"], "US")
 
             output = StringIO()
             args = type("Args", (), {"report_date": "2026-04-27", "families": "analytics", "dry_run": True})()
@@ -193,6 +209,109 @@ class AnalyticsCollectorTests(unittest.TestCase):
             errors = [item for item in limited_manifest["reports"] if item["status"] == "error"]
             self.assertEqual(len(errors), 1)
             self.assertIn("rerun later", errors[0]["status_reason"])
+
+    def test_sales_and_finance_downloads_are_raw_manifest_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            client = FakeAscClient()
+            args = type(
+                "Args",
+                (),
+                {"report_date": "2026-04-27", "families": "sales,finance", "dry_run": False, "create_requests": False},
+            )()
+
+            first = collect(config, args, client=client)
+            second = collect(config, args, client=client)
+
+            self.assertEqual({item["family"] for item in first["reports"]}, {"sales", "finance"})
+            self.assertEqual(client.report_requests_seen[0][1], "/v1/salesReports")
+            self.assertEqual(client.report_requests_seen[1][1], "/v1/financeReports")
+            self.assertEqual(client.report_requests_seen[0][2]["filter[reportType]"], "SALES")
+            self.assertEqual(client.report_requests_seen[1][2]["filter[reportType]"], "FINANCIAL")
+            sales = next(item for item in first["reports"] if item["family"] == "sales")
+            finance = next(item for item in first["reports"] if item["family"] == "finance")
+            self.assertEqual(sales["download_url_source"], "/v1/salesReports")
+            self.assertEqual(sales["requested_date"], "2026-04-27")
+            self.assertEqual(sales["granularity"], "DAILY")
+            self.assertEqual(sales["row_count"], 1)
+            self.assertEqual(len(sales["checksum_sha256"]), 64)
+            self.assertTrue(Path(sales["raw_path"]).exists())
+            self.assertEqual(finance["download_url_source"], "/v1/financeReports")
+            self.assertEqual(
+                finance["requested_window"],
+                {"fiscal_period": "2026-04", "region": "US"},
+            )
+            self.assertEqual(finance["row_count"], 1)
+            self.assertEqual(len(finance["checksum_sha256"]), 64)
+            self.assertEqual({item["status"] for item in second["reports"]}, {"unchanged"})
+            self.assertEqual(second["completeness"]["status"], "complete")
+
+    def test_finance_permission_failure_does_not_block_sales(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            client = FakeAscClient(fail_paths={"/v1/financeReports": AscApiError(403, "finance forbidden")})
+            args = type(
+                "Args",
+                (),
+                {"report_date": "2026-04-27", "families": "sales,finance", "dry_run": False, "create_requests": False},
+            )()
+
+            manifest = collect(config, args, client=client)
+
+            statuses = {item["family"]: item["status"] for item in manifest["reports"]}
+            self.assertEqual(statuses["sales"], "downloaded")
+            self.assertEqual(statuses["finance"], "permission_blocked")
+            self.assertEqual(manifest["completeness"]["status"], "incomplete")
+
+    def test_unavailable_sales_report_does_not_block_finance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            client = FakeAscClient(
+                fail_paths={"/v1/salesReports": AscApiError(404, "sales unavailable")}
+            )
+            args = type(
+                "Args",
+                (),
+                {
+                    "report_date": "2026-04-27",
+                    "families": "sales,finance",
+                    "dry_run": False,
+                    "create_requests": False,
+                },
+            )()
+
+            manifest = collect(config, args, client=client)
+
+            statuses = {item["family"]: item["status"] for item in manifest["reports"]}
+            self.assertEqual(statuses["sales"], "unavailable")
+            self.assertEqual(statuses["finance"], "downloaded")
+            self.assertEqual(manifest["completeness"]["status"], "incomplete")
+
+    def test_finance_dry_run_validates_required_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            del config["families"]["finance"]["reports"][0]["region_code"]
+
+            with self.assertRaises(SystemExit):
+                build_plan(config, "2026-04-27", {"finance"})
+
+    def test_sales_and_finance_params_accept_family_level_catalog_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            del config["app"]["vendor_number"]
+            config["families"]["sales_trends"]["vendor_number"] = "sales-family-vendor"
+            config["families"]["finance"]["vendor_number"] = "finance-family-vendor"
+            finance_report = config["families"]["finance"]["reports"][0]
+            finance_report["region"] = finance_report.pop("region_code")
+            finance_report["fiscal_period"] = "2026-03"
+
+            sales = sales_params(config, config["families"]["sales_trends"]["reports"][0], "2026-04-27")
+            finance = finance_params(config, finance_report, "2026-04-27")
+
+            self.assertEqual(sales["filter[vendorNumber]"], "sales-family-vendor")
+            self.assertEqual(finance["filter[vendorNumber]"], "finance-family-vendor")
+            self.assertEqual(finance["filter[regionCode]"], "US")
+            self.assertEqual(finance["filter[reportDate]"], "2026-03")
 
 
 if __name__ == "__main__":

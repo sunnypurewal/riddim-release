@@ -247,6 +247,21 @@ Collectors and evaluators must distinguish:
 Evaluations must treat every non-empty missing-data status as
 `insufficient_data`, not as a zero result.
 
+## Sales And Finance Access
+
+Sales and Trends collection uses the App Store Connect Sales and Trends report
+endpoint. The catalog must provide a vendor number plus frequency, report date,
+report type, subtype, and report version. These reports are useful for download,
+sales, proceeds proxy, territory, and product-type dimensions, but they are not
+financial settlement records.
+
+Finance collection uses the Finance report endpoint. The catalog must provide a
+vendor number, region code, fiscal period, and report type. Finance access is
+role- and account-dependent; many valid App Store Connect API keys can read app
+or sales data but cannot read finance reports. Collectors must record those
+responses as `permission_blocked` or `unavailable` in `manifest.json` and keep
+collecting unrelated report families.
+
 ## Fixtures
 
 This repo includes fixture files for documentation and tests:
