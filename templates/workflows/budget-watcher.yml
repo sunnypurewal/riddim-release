@@ -1,0 +1,27 @@
+# riddim-release template - copy to .github/workflows/budget-watcher.yml and adjust
+#
+# PLACEHOLDER - full implementation is tracked in RIDDIM Epic 3 (budget-aware runner selection).
+# When implemented, this workflow will monitor GitHub Actions billing usage and automatically
+# flip RUNNER_LABELS_MAC / RUNNER_LABELS_LINUX between hosted and self-hosted runner labels
+# when usage exceeds 85% of the monthly included minutes.
+#
+# Required repo secret (when implemented): RUNNER_BUDGET_PAT
+#   Scopes: read:user, read:billing, repo
+#
+# See RIDDIM-54 for the full budget-watcher workflow implementation.
+name: Runner Budget Watcher
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Placeholder
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
+    steps:
+      - name: Not implemented yet
+        run: |
+          echo "Budget watcher implementation is tracked in RIDDIM-54."
