@@ -194,19 +194,6 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh create
 
-      - name: Configure private GitHub package auth
-        if: ${{ !inputs.dry_run }}
-        env:
-          GH_PACKAGE_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}
-        run: |
-          if [ -z "${GH_PACKAGE_TOKEN:-}" ]; then
-            echo "No GitHub package token available; private SwiftPM dependencies may fail to resolve."
-            exit 0
-          fi
-          git config --global \
-            url."https://x-access-token:${GH_PACKAGE_TOKEN}@github.com/".insteadOf \
-            "https://github.com/"
-
       - name: Dry-run build/upload summary
         if: ${{ inputs.dry_run }}
         run: |
@@ -220,6 +207,9 @@ jobs:
           NEW_VERSION: ${{ needs.compute-version.outputs.next_version }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         run: |
           bundle exec fastlane deploy \
             scheme:${{ inputs.scheme }} \
@@ -252,13 +242,7 @@ jobs:
 
       - name: Delete ephemeral keychain
         if: ${{ always() && !inputs.dry_run }}
-        env:
-          GH_PACKAGE_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}
-        run: |
-          if [ -n "${GH_PACKAGE_TOKEN:-}" ]; then
-            git config --global --unset-all url."https://x-access-token:${GH_PACKAGE_TOKEN}@github.com/".insteadOf || true
-          fi
-          bash .riddim-release/scripts/runner/ephemeral_keychain.sh cleanup
+        run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh cleanup
 
   # ─── Job 3: Create draft GitHub Release ─────────────────────────────────────
   create-draft-release:
