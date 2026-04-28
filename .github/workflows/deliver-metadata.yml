@@ -1,0 +1,81 @@
+name: Deliver App Store Metadata
+
+# Reusable workflow — called by each consuming app via a shim.
+# Pushes updated App Store listing metadata (description, keywords, subtitle,
+# promotional text, release notes) to App Store Connect with no binary upload.
+#
+# The push.paths filter that gates this on metadata file changes lives in the
+# consumer shim, not here — workflow_call does not accept paths: filters.
+
+on:
+  workflow_call:
+    inputs:
+      ios_workdir:
+        required: false
+        type: string
+        default: "ios"
+      bundle_id:
+        required: true
+        type: string
+      team_id:
+        required: true
+        type: string
+      runner_labels_linux:
+        required: true
+        type: string
+    secrets:
+      AWS_RELEASE_ROLE_ARN:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deliver-metadata
+  cancel-in-progress: true
+
+jobs:
+  deliver:
+    name: Push metadata to App Store Connect
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+
+    steps:
+      - name: Checkout calling repo
+        uses: actions/checkout@v4
+
+      - name: Checkout riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF || 'v1' }}
+          path: .riddim-release
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Fetch App Store Connect credentials
+        run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Set up Ruby and Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Deliver metadata to App Store Connect
+        working-directory: ${{ inputs.ios_workdir }}
+        run: bundle exec fastlane deliver
+
+      - name: Summary
+        run: |
+          echo "## Metadata delivered to App Store Connect" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Updated fields: description, subtitle, keywords, promotional text, release notes, support/marketing/privacy URLs." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Screenshots and binary were not touched." >> "$GITHUB_STEP_SUMMARY"
+          echo "Changes are visible immediately in App Store Connect and go live to users on the next approved app version." >> "$GITHUB_STEP_SUMMARY"
