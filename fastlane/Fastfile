@@ -53,6 +53,7 @@ platform :ios do
     build_app(
       scheme:           scheme,
       configuration:    "Release",
+      destination:      "generic/platform=iOS",
       export_method:    "app-store",
       xcargs:           "DEVELOPMENT_TEAM=#{team_id} SENTRY_DSN=#{sentry_dsn}",
       output_directory: "build",
