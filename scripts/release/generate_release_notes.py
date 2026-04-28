@@ -61,6 +61,14 @@ def extract_release_notes_from_pr(pr_number: str) -> list[str]:
     return notes
 
 
+def write_content(output: str, content: str) -> None:
+    parent = os.path.dirname(output)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(output, "w") as f:
+        f.write(content)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -83,7 +91,12 @@ def main() -> None:
         notes.extend(extract_release_notes_from_pr(pr_num))
 
     if not notes:
-        print("No Release-Note: lines found in merged PRs — using existing release_notes.txt unchanged.")
+        content = "What's new in this release:\n\n- Maintenance and stability improvements.\n"
+        if args.dry_run:
+            print(content)
+            return
+        write_content(args.output, content)
+        print(f"No Release-Note: lines found in merged PRs; wrote fallback notes to {args.output}")
         return
 
     bullets = "\n".join(f"• {n}" for n in notes)
@@ -93,11 +106,7 @@ def main() -> None:
         print(content)
         return
 
-    parent = os.path.dirname(args.output)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(args.output, "w") as f:
-        f.write(content)
+    write_content(args.output, content)
 
     print(f"Wrote {len(notes)} release note(s) to {args.output}")
     print(content)

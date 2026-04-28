@@ -44,6 +44,31 @@ class GenerateReleaseNotesTests(unittest.TestCase):
                 "What's new in this release:\n\n• Ship the thing\n",
             )
 
+    def test_writes_fallback_notes_when_no_pr_notes_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "metadata" / "release_notes.txt"
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    ["generate_release_notes.py", "--output", str(output)],
+                ),
+                mock.patch.object(generate_release_notes, "get_last_release_tag", return_value="v1.0.0"),
+                mock.patch.object(generate_release_notes, "get_merged_pr_numbers", return_value=["123"]),
+                mock.patch.object(
+                    generate_release_notes,
+                    "extract_release_notes_from_pr",
+                    return_value=[],
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                generate_release_notes.main()
+
+            self.assertEqual(
+                output.read_text(),
+                "What's new in this release:\n\n- Maintenance and stability improvements.\n",
+            )
+
 
 class VerifyEvidenceTests(unittest.TestCase):
     def test_ticket_prefix_filters_merge_lines_and_evidence_files(self):
