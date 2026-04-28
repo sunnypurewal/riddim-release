@@ -20,6 +20,9 @@ on:
       team_id:
         required: true
         type: string
+      runner_labels_mac:
+        required: true
+        type: string
       runner_labels_linux:
         required: true
         type: string

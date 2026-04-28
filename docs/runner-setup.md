@@ -63,7 +63,7 @@ Configure the runner:
   --url "https://github.com/$GH_REPO" \
   --token "$RUNNER_TOKEN" \
   --name "$(hostname)-${GH_REPO##*/}-mac" \
-  --labels "self-hosted,macOS,app-store-release" \
+  --labels "self-hosted,macOS" \
   --unattended
 ```
 
@@ -78,15 +78,13 @@ Install it as a LaunchAgent:
 Update repo variables to use it:
 
 ```bash
+gh variable set RUNNER_PROFILE --repo "$GH_REPO" --body self-hosted
 gh variable set RUNNER_LABELS_MAC \
   --repo "$GH_REPO" \
-  --body '["self-hosted","macOS","app-store-release"]'
-```
-
-Keep Linux jobs on hosted runners unless you have a Linux fallback:
-
-```bash
-gh variable set RUNNER_LABELS_LINUX --repo "$GH_REPO" --body '["ubuntu-latest"]'
+  --body '["self-hosted","macOS"]'
+gh variable set RUNNER_LABELS_LINUX \
+  --repo "$GH_REPO" \
+  --body '["self-hosted","macOS"]'
 ```
 
 ## Multiple Repos on One Mac

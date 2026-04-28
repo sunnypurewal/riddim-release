@@ -149,8 +149,33 @@ gh variable set XCODEPROJ_PATH      --repo "$GH_REPO" --body "$XCODEPROJ_PATH"
 gh variable set IOS_WORKDIR         --repo "$GH_REPO" --body "$IOS_WORKDIR"
 gh variable set PRIMARY_LOCALE      --repo "$GH_REPO" --body "$PRIMARY_LOCALE"
 gh variable set EXTRA_BUNDLE_IDS    --repo "$GH_REPO" --body ""
+gh variable set RUNNER_PROFILE      --repo "$GH_REPO" --body hosted
 gh variable set RUNNER_LABELS_MAC   --repo "$GH_REPO" --body '["macos-15"]'
 gh variable set RUNNER_LABELS_LINUX --repo "$GH_REPO" --body '["ubuntu-latest"]'
+```
+
+Runner variables are the only switch between hosted and self-hosted execution.
+`RUNNER_PROFILE` records the current mode for humans and automation,
+`RUNNER_LABELS_MAC` selects macOS jobs, and `RUNNER_LABELS_LINUX` selects Linux
+jobs. The reusable workflows require `runner_labels_mac` and
+`runner_labels_linux` as JSON-encoded array strings, and every job uses
+`fromJSON(...)` instead of literal runner names. The copied workflow shims
+provide hosted fallbacks with `vars.RUNNER_LABELS_MAC || '["macos-15"]'` and
+`vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'`, so a newly adopted repo can
+run before the variables are created.
+
+Use these exact values for the supported profiles:
+
+```bash
+# Hosted mode
+gh variable set RUNNER_PROFILE      --repo "$GH_REPO" --body hosted
+gh variable set RUNNER_LABELS_MAC   --repo "$GH_REPO" --body '["macos-15"]'
+gh variable set RUNNER_LABELS_LINUX --repo "$GH_REPO" --body '["ubuntu-latest"]'
+
+# Self-hosted fallback mode
+gh variable set RUNNER_PROFILE      --repo "$GH_REPO" --body self-hosted
+gh variable set RUNNER_LABELS_MAC   --repo "$GH_REPO" --body '["self-hosted","macOS"]'
+gh variable set RUNNER_LABELS_LINUX --repo "$GH_REPO" --body '["self-hosted","macOS"]'
 ```
 
 If the app has an App Clip or extension, encode extra signing targets as
@@ -286,6 +311,7 @@ primary_locale: en-US
 extra_bundle_ids: ""
 runner_labels_mac: '["macos-15"]'
 runner_labels_linux: '["ubuntu-latest"]'
+runner_profile: hosted
 approval_environment: app-store-release
 aws_release_role_arn: arn:aws:iam::<account-id>:role/github-appstore-release
 ```
