@@ -33,7 +33,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DATE="$(date +%Y-%m-%d)"
 MONTH="$(date +%Y-%m)"
 IOS_WORKDIR="${IOS_WORKDIR:-ios}"
-OUT="${EVIDENCE_OUTPUT_DIR:-$REPO_ROOT/docs/marketing}/growth-metrics-$MONTH.md"
+EVIDENCE_OUTPUT_DIR="${EVIDENCE_OUTPUT_DIR:-docs/marketing}"
+
+resolve_from_root() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$REPO_ROOT" "$1" ;;
+  esac
+}
+
+IOS_DIR="$(resolve_from_root "$IOS_WORKDIR")"
+OUT="$(resolve_from_root "$EVIDENCE_OUTPUT_DIR")/growth-metrics-$MONTH.md"
 
 # Validate required env
 : "${ASC_KEY_ID:?Set ASC_KEY_ID}"
@@ -78,7 +88,7 @@ rev_data = asc_get(
     f"/apps/{APP_ID}/customerReviews",
     params={
         "limit": 20,
-        "sort": "-rating",
+        "sort": "-createdDate",
         "fields[customerReviews]": "rating,title,body,createdDate",
     },
 )
@@ -102,8 +112,8 @@ else:
 result = {
     "fetched_at": "$DATE",
     "review_count_in_sample": total,
-    "avg_rating_in_sample":   round(avg, 2) if avg else None,
-    "five_star_pct_in_sample": round(five_pc, 1) if five_pc else None,
+    "avg_rating_in_sample":   round(avg, 2) if avg is not None else None,
+    "five_star_pct_in_sample": round(five_pc, 1) if five_pc is not None else None,
     "recent_reviews": reviews[:5],
 }
 with open("$RATINGS_JSON", "w") as f:
@@ -111,11 +121,34 @@ with open("$RATINGS_JSON", "w") as f:
 print(f"  Wrote ratings data ({total} reviews sampled)", file=sys.stderr)
 PYEOF
 
-RATING_AVG=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); print(d['avg_rating_in_sample'] or '_[fill from ASC]_')")
-RATING_COUNT=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); print(d['review_count_in_sample'] or '_[fill from ASC]_')")
-FIVE_STAR_PCT=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); v=d['five_star_pct_in_sample']; print(f'{v}%' if v else '_[fill from ASC]_')")
+RATING_AVG=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); v=d['avg_rating_in_sample']; print(v if v is not None else '_[fill from ASC]_')")
+RATING_COUNT=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); v=d['review_count_in_sample']; print(v if v is not None else '_[fill from ASC]_')")
+FIVE_STAR_PCT=$(python3 -c "import json; d=json.load(open('$RATINGS_JSON')); v=d['five_star_pct_in_sample']; print(f'{v}%' if v is not None else '_[fill from ASC]_')")
+RECENT_REVIEWS=$(RATINGS_JSON="$RATINGS_JSON" python3 - <<'PYEOF'
+import json
+import os
 
-KEYWORDS=$(cat "$REPO_ROOT/$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/keywords.txt" 2>/dev/null || echo "_[not found]_")
+with open(os.environ["RATINGS_JSON"]) as f:
+    reviews = json.load(f).get("recent_reviews", [])
+
+def cell(value):
+    value = str(value or "").replace("\n", " ").replace("|", "\\|").strip()
+    return value or "_[blank]_"
+
+if reviews:
+    print("| Date | Rating | Title | Body excerpt |")
+    print("|---|---:|---|---|")
+    for review in reviews:
+        print(
+            f"| {cell(review.get('date'))} | {cell(review.get('rating'))} | "
+            f"{cell(review.get('title'))} | {cell(review.get('body'))} |"
+        )
+else:
+    print("_No reviews returned by the ASC API sample._")
+PYEOF
+)
+
+KEYWORDS=$(cat "$IOS_DIR/fastlane/metadata/$PRIMARY_LOCALE/keywords.txt" 2>/dev/null || echo "_[not found]_")
 
 echo "Writing baseline document to $OUT..."
 mkdir -p "$(dirname "$OUT")"
@@ -184,6 +217,12 @@ cat > "$OUT" <<MDEOF
 | Total ratings (lifetime) | — | _[fill]_ |
 | Ratings in sample | $RATING_COUNT | — |
 | 5-star % in sample | $FIVE_STAR_PCT | _[fill lifetime]_ |
+
+---
+
+## Recent Reviews (5 most recent in API sample)
+
+$RECENT_REVIEWS
 
 ---
 

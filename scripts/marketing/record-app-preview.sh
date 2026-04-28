@@ -14,7 +14,7 @@
 #
 # Optional ENV:
 #   DEVICE_NAME      — simulator name (default: iPhone 17 Pro Max)
-#   XCODE_DESTINATION — xcodebuild destination string (default: platform=iOS Simulator,name=$DEVICE_NAME)
+#   XCODE_DESTINATION — xcodebuild destination string (default: resolved simulator UDID for DEVICE_NAME)
 #   XCODEPROJ_PATH   — path to the .xcodeproj file (default: $SCHEME.xcodeproj)
 #   IOS_WORKDIR      — directory containing the Xcode project (default: ios)
 #   OUTPUT_DIR       — directory for the output mp4 (default: docs/marketing/preview)
@@ -36,40 +36,86 @@ DEVICE_NAME="${DEVICE_NAME:-iPhone 17 Pro Max}"
 IOS_WORKDIR="${IOS_WORKDIR:-ios}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IOS_DIR="$REPO_ROOT/$IOS_WORKDIR"
-OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/docs/marketing/preview}"
-RAW_VIDEO="$OUTPUT_DIR/raw-capture.mp4"
+OUTPUT_DIR="${OUTPUT_DIR:-docs/marketing/preview}"
+
+resolve_from_root() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$REPO_ROOT" "$1" ;;
+  esac
+}
+
+IOS_DIR="$(resolve_from_root "$IOS_WORKDIR")"
+OUTPUT_DIR="$(resolve_from_root "$OUTPUT_DIR")"
 FINAL_VIDEO="$OUTPUT_DIR/app-preview-final.mp4"
 FASTLANE_PREVIEW_DIR="$IOS_DIR/fastlane/app-previews/$PRIMARY_LOCALE"
 FASTLANE_PREVIEW_VIDEO="$FASTLANE_PREVIEW_DIR/IPHONE_67_app-preview.mp4"
 
 XCODEPROJ_PATH="${XCODEPROJ_PATH:-$SCHEME.xcodeproj}"
-XCODE_DESTINATION="${XCODE_DESTINATION:-platform=iOS Simulator,name=$DEVICE_NAME}"
 
 EVIDENCE="$REPO_ROOT/scripts/evidence/run-evidence.sh"
 
 mkdir -p "$OUTPUT_DIR"
 
-if ! command -v ffprobe >/dev/null 2>&1; then
-  echo "error: ffprobe is required (brew install ffmpeg)" >&2
+for tool in ffmpeg ffprobe; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: $tool is required (brew install ffmpeg)" >&2
+    exit 1
+  fi
+done
+
+DEVICE_UDID=$(DEVICE_NAME="$DEVICE_NAME" python3 - <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+
+name = os.environ["DEVICE_NAME"]
+devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"]))
+for runtime_devices in devices.get("devices", {}).values():
+    for device in runtime_devices:
+        if device.get("name") == name and device.get("isAvailable", True):
+            print(device["udid"])
+            sys.exit(0)
+print(f"error: no available simulator named {name!r}", file=sys.stderr)
+sys.exit(1)
+PYEOF
+)
+
+XCODE_DESTINATION="${XCODE_DESTINATION:-platform=iOS Simulator,id=$DEVICE_UDID}"
+
+RAW_STEM="$(mktemp "$OUTPUT_DIR/raw-capture.XXXXXX")"
+RAW_VIDEO="$RAW_STEM.mp4"
+rm -f "$RAW_STEM"
+
+cleanup_raw_video() {
+  rm -f "$RAW_VIDEO"
+}
+trap cleanup_raw_video EXIT
+
+if [[ ! -d "$IOS_DIR" ]]; then
+  echo "error: IOS_WORKDIR does not exist: $IOS_DIR" >&2
   exit 1
 fi
 
-xcrun simctl boot "$DEVICE_NAME" >/dev/null 2>&1 || true
-xcrun simctl bootstatus "$DEVICE_NAME" -b >/dev/null
+xcrun simctl shutdown "$DEVICE_UDID" >/dev/null 2>&1 || true
+xcrun simctl erase "$DEVICE_UDID" >/dev/null
+xcrun simctl boot "$DEVICE_UDID" >/dev/null
+xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
+xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
-rm -f "$RAW_VIDEO" "$FINAL_VIDEO"
+rm -f "$FINAL_VIDEO"
 
-xcrun simctl io "$DEVICE_NAME" recordVideo --codec h264 "$RAW_VIDEO" &
+xcrun simctl io "$DEVICE_UDID" recordVideo --codec h264 "$RAW_VIDEO" &
 RECORDER_PID=$!
 
-cleanup() {
+stop_recording() {
   if kill -0 "$RECORDER_PID" >/dev/null 2>&1; then
     kill -INT "$RECORDER_PID" >/dev/null 2>&1 || true
     wait "$RECORDER_PID" >/dev/null 2>&1 || true
   fi
 }
-trap cleanup EXIT
+trap 'stop_recording; cleanup_raw_video' EXIT
 
 cd "$IOS_DIR"
 xcodebuild test \
@@ -78,8 +124,8 @@ xcodebuild test \
   -destination "$XCODE_DESTINATION" \
   -only-testing:"$UITEST_TARGET"
 
-cleanup
-trap - EXIT
+stop_recording
+trap cleanup_raw_video EXIT
 
 # Post-process: trim to ≤30s, resize to 886×1920, encode H.264.
 # Delegate to scripts/evidence/run-evidence.sh if available in the consuming
