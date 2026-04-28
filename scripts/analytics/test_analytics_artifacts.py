@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.analytics.artifact import artifact_root, load_json
 from scripts.analytics.asc_client import AscApiError
 from scripts.analytics.collect_asc_analytics import build_plan, collect, finance_params, report_matches, sales_params
+from scripts.analytics.evaluate_benchmark import evaluate
+from scripts.analytics.normalize_reports import normalize_artifact
 
 
 def gz_bytes(text: str) -> bytes:
@@ -84,8 +86,8 @@ class FakeAscClient:
         self.download_count += 1
         return self.data
 
-    def request(self, method, path, params=None):
-        self.report_requests_seen.append((method, path, params or {}))
+    def request(self, method, path, params=None, **kwargs):
+        self.report_requests_seen.append((method, path, params or {}, kwargs))
         if path in self.fail_paths:
             raise self.fail_paths[path]
         return SimpleNamespace(content=self.data)
@@ -228,6 +230,12 @@ class AnalyticsCollectorTests(unittest.TestCase):
             self.assertEqual(client.report_requests_seen[1][1], "/v1/financeReports")
             self.assertEqual(client.report_requests_seen[0][2]["filter[reportType]"], "SALES")
             self.assertEqual(client.report_requests_seen[1][2]["filter[reportType]"], "FINANCIAL")
+            self.assertTrue(
+                all(
+                    request[3]["headers"]["Accept"] == "application/a-gzip"
+                    for request in client.report_requests_seen
+                )
+            )
             sales = next(item for item in first["reports"] if item["family"] == "sales")
             finance = next(item for item in first["reports"] if item["family"] == "finance")
             self.assertEqual(sales["download_url_source"], "/v1/salesReports")
@@ -312,6 +320,52 @@ class AnalyticsCollectorTests(unittest.TestCase):
             self.assertEqual(finance["filter[vendorNumber]"], "finance-family-vendor")
             self.assertEqual(finance["filter[regionCode]"], "US")
             self.assertEqual(finance["filter[reportDate]"], "2026-03")
+
+    def test_normalize_and_evaluate_use_manifest_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            client = FakeAscClient(
+                data=gz_bytes(
+                    "Date\tImpressions\tUnexpected Column\n"
+                    "2026-04-01\t100\tkept\n"
+                    "2026-04-08\t130\tkept\n"
+                )
+            )
+            args = type(
+                "Args",
+                (),
+                {"report_date": "2026-04-27", "families": "analytics", "dry_run": False, "create_requests": False},
+            )()
+            collect(config, args, client=client)
+            root = artifact_root(config, "2026-04-27")
+
+            normalized_manifest = normalize_artifact(root)
+            report = normalized_manifest["reports"][0]
+            row = json.loads(Path(report["normalized_path"]).read_text().splitlines()[0])
+            self.assertEqual(row["Unexpected Column"], "kept")
+            self.assertEqual(row["_app_id"], "1234567890")
+            self.assertEqual(row["_bundle_id"], "com.riddim.fixture")
+            self.assertEqual(row["_release_tag"], "v1.0.0")
+            self.assertEqual(row["_jira_keys"], "RIDDIM-59")
+            self.assertTrue(Path(report["schema_path"]).exists())
+            self.assertIn("Privacy And Completeness", (root / "summary.md").read_text())
+
+            goal = root / "goal.json"
+            goal.write_text(
+                json.dumps(
+                    {
+                        "jira_key": "RIDDIM-99",
+                        "baseline_window": {"start": "2026-04-01", "end": "2026-04-01"},
+                        "campaign_window": {"start": "2026-04-08", "end": "2026-04-08"},
+                        "metrics": [{"name": "impressions", "source_column": "Impressions", "target_delta": 0.1}],
+                    }
+                )
+            )
+            output = evaluate(root, "RIDDIM-99", goal)
+            self.assertIn("Status: met", output.read_text())
+
+            missing = evaluate(root, "RIDDIM-100", root / "missing.json")
+            self.assertIn("Goal metadata was not found", missing.read_text())
 
 
 if __name__ == "__main__":

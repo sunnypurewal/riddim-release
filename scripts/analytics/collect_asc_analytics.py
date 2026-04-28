@@ -35,7 +35,7 @@ SUPPORTED_FAMILIES = {"analytics", "sales", "finance"}
 
 
 def build_plan(config: dict[str, Any], report_date: str, families: set[str] | None = None) -> list[dict[str, Any]]:
-    selected = families or enabled_families(config)
+    selected = families if families is not None else enabled_families(config)
     plan: list[dict[str, Any]] = []
     if "analytics" in selected:
         plan.extend(build_analytics_plan(config, report_date))
@@ -350,7 +350,7 @@ def write_endpoint_report_once(
                 "refusing to rewrite immutable raw file."
             )
         return "unchanged"
-    response = client.request("GET", endpoint, params=params)
+    response = client.request("GET", endpoint, params=params, headers={"Accept": "application/a-gzip"})
     data = response.content
     downloaded_checksum = sha256_bytes(data)
     if existing and existing.get("checksum_sha256") and existing["checksum_sha256"] != downloaded_checksum:
