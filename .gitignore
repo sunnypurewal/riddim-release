@@ -1,0 +1,37 @@
+# Secrets — never commit
+*.p8
+*.p12
+*.mobileprovision
+.env
+.env.*
+!.env.example
+
+# Ruby / fastlane
+*.gem
+.bundle/
+vendor/bundle/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+fastlane/README.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Build artifacts
+build/
+*.ipa
+*.xcarchive
