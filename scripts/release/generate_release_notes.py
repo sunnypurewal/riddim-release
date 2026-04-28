@@ -36,11 +36,15 @@ def get_last_release_tag() -> str | None:
 
 
 def get_merged_pr_numbers(last_tag: str | None) -> list[str]:
-    """Return PR numbers from merge commits since the last release tag."""
+    """Return PR numbers from commits since the last release tag.
+
+    Works for both traditional merge commits ("Merge pull request #N") and
+    squash merges where GitHub appends "(#N)" to the commit title.
+    """
     if last_tag:
-        log = git("log", f"{last_tag}..HEAD", "--oneline", "--merges")
+        log = git("log", f"{last_tag}..HEAD", "--oneline")
     else:
-        log = git("log", "--oneline", "--merges", "-30")
+        log = git("log", "--oneline", "-50")
 
     pr_numbers: list[str] = []
     for line in log.splitlines():
@@ -83,7 +87,21 @@ def main() -> None:
         notes.extend(extract_release_notes_from_pr(pr_num))
 
     if not notes:
-        print("No Release-Note: lines found in merged PRs — using existing release_notes.txt unchanged.")
+        # Fall back to the committed release_notes.txt in the calling repo.
+        # Search fastlane/metadata/<any-locale>/release_notes.txt.
+        import glob
+        candidates = sorted(glob.glob("fastlane/metadata/*/release_notes.txt"))
+        if candidates and not args.dry_run:
+            import shutil
+            parent = os.path.dirname(args.output)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            shutil.copy(candidates[0], args.output)
+            print(f"No Release-Note: lines found — copied committed {candidates[0]} to {args.output}")
+        else:
+            print("No Release-Note: lines found and no committed release_notes.txt — output not written.")
+            if not args.dry_run:
+                sys.exit(1)
         return
 
     bullets = "\n".join(f"• {n}" for n in notes)
