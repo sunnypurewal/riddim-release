@@ -228,6 +228,8 @@ curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDI
   -o .github/workflows/deliver-metadata.yml
 curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/budget-watcher.yml" \
   -o .github/workflows/budget-watcher.yml
+curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/collect-asc-analytics.shim.yml" \
+  -o .github/workflows/collect-asc-analytics.yml
 ```
 
 Copy the fastlane scaffold:

@@ -1,0 +1,37 @@
+name: Self Test ASC Analytics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/collect-asc-analytics.yml"
+      - ".github/workflows/self-test-analytics.yml"
+      - "docs/analytics-artifact.md"
+      - "docs/asc-analytics.md"
+      - "scripts/analytics/**"
+      - "templates/workflows/collect-asc-analytics.shim.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analytics-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate workflow syntax
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: .github/workflows/collect-asc-analytics.yml .github/workflows/self-test-analytics.yml templates/workflows/collect-asc-analytics.shim.yml
+
+      - name: Run analytics artifact tests
+        run: python3 -m unittest discover -s scripts/analytics -p 'test*.py'
+
+      - name: Run fixture dry-run
+        run: |
+          python3 scripts/analytics/collect_asc_analytics.py \
+            --config scripts/analytics/fixtures/report-catalog.fixture.json \
+            --report-date 2026-04-27 \
+            --families analytics,sales,finance \
+            --dry-run

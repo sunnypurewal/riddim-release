@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.analytics.artifact import artifact_root, load_json
 from scripts.analytics.asc_client import AscApiError
 from scripts.analytics.collect_asc_analytics import build_plan, collect, report_matches
+from scripts.analytics.evaluate_benchmark import evaluate
+from scripts.analytics.normalize_reports import normalize_artifact
 
 
 def gz_bytes(text: str) -> bytes:
@@ -42,6 +44,7 @@ class FakeAscClient:
         self.segments = segments
         self.fail_paths = fail_paths or {}
         self.download_count = 0
+        self.endpoint_requests = []
         self.created_payloads = []
         self.paged_requests = []
 
@@ -81,6 +84,12 @@ class FakeAscClient:
     def download(self, url):
         self.download_count += 1
         return self.data
+
+    def request(self, method, path, params=None):
+        self.endpoint_requests.append((method, path, params or {}))
+        if path in self.fail_paths:
+            raise self.fail_paths[path]
+        return type("Response", (), {"content": self.data})()
 
 
 class AnalyticsCollectorTests(unittest.TestCase):
@@ -193,6 +202,66 @@ class AnalyticsCollectorTests(unittest.TestCase):
             errors = [item for item in limited_manifest["reports"] if item["status"] == "error"]
             self.assertEqual(len(errors), 1)
             self.assertIn("rerun later", errors[0]["status_reason"])
+
+    def test_sales_and_finance_collectors_share_manifest_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            config["families"]["sales_trends"]["enabled"] = True
+            config["families"]["sales_trends"]["vendor_number"] = "12345678"
+            config["families"]["sales_trends"]["reports"] = [
+                {"frequency": "DAILY", "report_type": "SALES", "report_subtype": "SUMMARY", "version": "1_0"}
+            ]
+            config["families"]["finance"]["enabled"] = True
+            config["families"]["finance"]["vendor_number"] = "12345678"
+            config["families"]["finance"]["reports"] = [{"region": "US", "report_type": "FINANCIAL", "fiscal_period": "2026-04"}]
+            client = FakeAscClient(data=gz_bytes("Date\tUnits\n2026-04-27\t3\n"))
+            args = type(
+                "Args",
+                (),
+                {"report_date": "2026-04-27", "families": "sales,finance", "dry_run": False, "create_requests": False},
+            )()
+
+            manifest = collect(config, args, client=client)
+
+            self.assertEqual({item["family"] for item in manifest["reports"]}, {"sales", "finance"})
+            self.assertEqual({item["status"] for item in manifest["reports"]}, {"downloaded"})
+            self.assertEqual({request[1] for request in client.endpoint_requests}, {"/v1/salesReports", "/v1/financeReports"})
+
+    def test_normalize_and_evaluate_use_manifest_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = fixture_config(Path(tmp))
+            client = FakeAscClient(data=gz_bytes("Date\tImpressions\tUnexpected Column\n2026-04-01\t100\tkept\n2026-04-08\t130\tkept\n"))
+            args = type(
+                "Args",
+                (),
+                {"report_date": "2026-04-27", "families": "analytics", "dry_run": False, "create_requests": False},
+            )()
+            collect(config, args, client=client)
+            root = artifact_root(config, "2026-04-27")
+
+            normalized_manifest = normalize_artifact(root)
+            report = normalized_manifest["reports"][0]
+            row = json.loads(Path(report["normalized_path"]).read_text().splitlines()[0])
+            self.assertEqual(row["Unexpected Column"], "kept")
+            self.assertTrue(Path(report["schema_path"]).exists())
+            self.assertIn("Privacy And Completeness", (root / "summary.md").read_text())
+
+            goal = root / "goal.json"
+            goal.write_text(
+                json.dumps(
+                    {
+                        "jira_key": "RIDDIM-99",
+                        "baseline_window": {"start": "2026-04-01", "end": "2026-04-01"},
+                        "campaign_window": {"start": "2026-04-08", "end": "2026-04-08"},
+                        "metrics": [{"name": "impressions", "source_column": "Impressions", "target_delta": 0.1}],
+                    }
+                )
+            )
+            output = evaluate(root, "RIDDIM-99", goal)
+            self.assertIn("Status: met", output.read_text())
+
+            missing = evaluate(root, "RIDDIM-100", root / "missing.json")
+            self.assertIn("Goal metadata was not found", missing.read_text())
 
 
 if __name__ == "__main__":
