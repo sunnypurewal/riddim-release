@@ -1,0 +1,251 @@
+name: Build and Deploy (reusable)
+
+# Reusable workflow: archive an iOS app, upload to TestFlight, and create
+# a draft GitHub Release. Callers supply all app-specific params via inputs.
+# Set dry_run: true to build the archive but skip TestFlight + draft release.
+
+on:
+  workflow_call:
+    inputs:
+      apple_app_id:
+        required: true
+        type: string
+      bundle_id:
+        required: true
+        type: string
+      team_id:
+        required: true
+        type: string
+      scheme:
+        required: true
+        type: string
+      xcodeproj_path:
+        required: true
+        type: string
+      ios_workdir:
+        required: false
+        type: string
+        default: "ios"
+      bump:
+        required: false
+        type: string
+        default: "patch"
+      primary_locale:
+        required: false
+        type: string
+        default: "en-US"
+      extra_bundle_ids:
+        required: false
+        type: string
+        default: ""
+      has_app_clip:
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+      runner_labels_mac:
+        required: true
+        type: string   # JSON-encoded array, e.g. '["macos-15"]'
+      runner_labels_linux:
+        required: true
+        type: string   # JSON-encoded array, e.g. '["ubuntu-latest"]'
+    secrets:
+      AWS_RELEASE_ROLE_ARN:
+        required: true
+      KEYCHAIN_PASSWORD:
+        required: true
+      SENTRY_DSN:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_ORG:
+        required: false
+      SENTRY_PROJECT:
+        required: false
+
+permissions:
+  contents: write   # create draft GitHub Release
+  id-token: write   # required for OIDC AWS authentication
+
+concurrency:
+  group: app-store-deploy
+  cancel-in-progress: false   # never cancel a deploy mid-flight
+
+env:
+  RIDDIM_RELEASE_REF: v1   # pin callers to the stable v1 contract; override for testing
+
+jobs:
+  # ─── Job 1: Determine the next version ─────────────────────────────────────
+  compute-version:
+    name: Compute next version
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    outputs:
+      next_version: ${{ steps.version.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Checkout riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          path: .riddim-release
+
+      - name: Fetch ASC credentials
+        run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Install Python dependencies
+        run: pip3 install PyJWT requests cryptography --quiet
+
+      - name: Compute next version
+        id: version
+        run: |
+          python3 .riddim-release/scripts/release/compute_next_version.py \
+            --app-id "${{ inputs.apple_app_id }}" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer-id "$ASC_ISSUER_ID" \
+            --private-key-path "$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8" \
+            --bump "${{ inputs.bump }}" \
+            --output-format github-output
+
+  # ─── Job 2: Build and upload to TestFlight ──────────────────────────────────
+  build-upload:
+    name: Archive, sign, and upload to TestFlight
+    runs-on: ${{ fromJSON(inputs.runner_labels_mac) }}
+    needs: compute-version
+    outputs:
+      build_number: ${{ steps.build-number.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          path: .riddim-release
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/*/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles(format('{0}/**/*.resolved', inputs.ios_workdir)) }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Set up Ruby and Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Fetch ASC credentials
+        run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Fetch distribution certificate
+        run: bash .riddim-release/scripts/runner/fetch_distribution_cert.sh
+
+      - name: Create ephemeral keychain
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh create
+
+      - name: Build and upload to TestFlight
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ inputs.ios_workdir }}
+        env:
+          NEW_VERSION: ${{ needs.compute-version.outputs.next_version }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          bundle exec fastlane deploy \
+            scheme:${{ inputs.scheme }} \
+            bundle_id:${{ inputs.bundle_id }} \
+            team_id:${{ inputs.team_id }} \
+            xcodeproj:${{ inputs.xcodeproj_path }} \
+            extra_bundle_ids:"${{ inputs.extra_bundle_ids }}"
+
+      - name: Read build number
+        id: build-number
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ inputs.ios_workdir }}
+        run: echo "build_number=$(cat build_number.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dSYMs to Sentry
+        if: ${{ !inputs.dry_run }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            echo "SENTRY_AUTH_TOKEN not set — skipping dSYM upload"
+            exit 0
+          fi
+          brew install getsentry/tools/sentry-cli
+          sentry-cli debug-files upload \
+            --include-sources \
+            ${{ inputs.ios_workdir }}/build/${{ inputs.scheme }}.xcarchive
+
+      - name: Delete ephemeral keychain
+        if: always()
+        run: bash .riddim-release/scripts/runner/ephemeral_keychain.sh cleanup
+
+  # ─── Job 3: Create draft GitHub Release ─────────────────────────────────────
+  create-draft-release:
+    name: Create draft GitHub Release
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    needs: [compute-version, build-upload]
+    if: ${{ !inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: sunnypurewal/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          path: .riddim-release
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .riddim-release/scripts/release/generate_release_notes.py \
+            --output /tmp/release_notes.txt
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.compute-version.outputs.next_version }}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release_notes.txt \
+            --draft \
+            --target "${{ github.sha }}"
