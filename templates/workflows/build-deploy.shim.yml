@@ -1,0 +1,39 @@
+# riddim-release template - copy to .github/workflows/build-deploy.yml and adjust
+# Requires repo variables: APPLE_APP_ID, BUNDLE_ID, TEAM_ID, SCHEME, XCODEPROJ_PATH,
+#   RUNNER_LABELS_MAC, RUNNER_LABELS_LINUX, PRIMARY_LOCALE
+# Optional variables: IOS_WORKDIR (default: ios), EXTRA_BUNDLE_IDS
+# Secrets (via secrets: inherit): AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD, optional SENTRY_*
+name: Create Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      dry_run:
+        description: 'Skip TestFlight upload and draft release'
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  call:
+    uses: sunnypurewal/riddim-release/.github/workflows/build-deploy.yml@v1
+    with:
+      apple_app_id:        ${{ vars.APPLE_APP_ID }}
+      bundle_id:           ${{ vars.BUNDLE_ID }}
+      team_id:             ${{ vars.TEAM_ID }}
+      scheme:              ${{ vars.SCHEME }}
+      xcodeproj_path:      ${{ vars.XCODEPROJ_PATH }}
+      ios_workdir:         ${{ vars.IOS_WORKDIR || 'ios' }}
+      primary_locale:      ${{ vars.PRIMARY_LOCALE }}
+      bump:                ${{ inputs.bump }}
+      dry_run:             ${{ inputs.dry_run }}
+      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      extra_bundle_ids:    ${{ vars.EXTRA_BUNDLE_IDS || '' }}
+      has_app_clip:        ${{ vars.HAS_APP_CLIP == 'true' }}
+    secrets: inherit

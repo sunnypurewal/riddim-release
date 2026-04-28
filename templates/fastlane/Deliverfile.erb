@@ -1,0 +1,17 @@
+# riddim-release template - render to ios/fastlane/Deliverfile and adjust
+app_identifier "<%= bundle_id %>"
+team_id "<%= team_id %>"
+
+# Metadata paths are relative to the ios/ working directory.
+metadata_path "./fastlane/metadata"
+
+# Screenshots are uploaded by release-app-store.yml.
+screenshots_path "./fastlane/screenshots"
+skip_screenshots true
+
+# App previews follow fastlane's device-token naming convention.
+app_previews_path "./fastlane/app-previews"
+
+# Release manager controls App Store rollout after approval.
+automatic_release false
+phased_release true

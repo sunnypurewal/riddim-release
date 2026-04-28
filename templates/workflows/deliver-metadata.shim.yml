@@ -1,0 +1,27 @@
+# riddim-release template - copy to .github/workflows/deliver-metadata.yml and adjust
+# The paths: filter lives HERE (not in the reusable workflow) because workflow_call does not
+# accept paths: filters. Adjust the paths to match this repo's fastlane layout.
+# Requires repo variables: BUNDLE_ID, TEAM_ID, RUNNER_LABELS_LINUX
+# Optional variables: IOS_WORKDIR (default: ios)
+name: Deliver Metadata
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/fastlane/metadata/**'
+      - 'ios/fastlane/screenshots/**'
+      - 'ios/fastlane/app-previews/**'
+      - 'ios/fastlane/Deliverfile'
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  call:
+    uses: sunnypurewal/riddim-release/.github/workflows/deliver-metadata.yml@v1
+    with:
+      ios_workdir:         ${{ vars.IOS_WORKDIR || 'ios' }}
+      bundle_id:           ${{ vars.BUNDLE_ID }}
+      team_id:             ${{ vars.TEAM_ID }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+    secrets: inherit
