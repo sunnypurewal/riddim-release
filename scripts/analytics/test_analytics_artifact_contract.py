@@ -97,6 +97,7 @@ class AnalyticsArtifactFixtureTests(unittest.TestCase):
         statuses = {report["status"] for report in manifest["reports"]}
 
         self.assertIn("delayed", statuses)
+        self.assertIn("thresholded", statuses)
         self.assertIn("permission_blocked", statuses)
         self.assertEqual(manifest["completeness"]["status"], "incomplete")
         caveats = " ".join(manifest["completeness"]["caveats"])
