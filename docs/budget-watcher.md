@@ -1,7 +1,8 @@
 # Budget Watcher
 
-Budget-aware runner selection is implemented by the RIDDIM-41 epic, not by the
-bootstrap docs story.
+Budget-aware runner selection uses the copy-in workflow template at
+`templates/workflows/budget-watcher.yml`. The full operator guide is tracked in
+the follow-up budget-watcher documentation story.
 
 Current v1 bootstrap contract:
 
@@ -31,5 +32,6 @@ gh variable set RUNNER_LABELS_LINUX \
   --body '["self-hosted","macOS"]'
 ```
 
-RIDDIM-41 will fill in the scheduled watcher, budget detection, and automatic
-variable flip.
+The watcher needs a manually-created `RUNNER_BUDGET_PAT` repo secret. The PAT
+must be able to read user billing usage and write repo variables; use
+`read:user`, `read:billing`, and `repo` scopes.
