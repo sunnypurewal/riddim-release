@@ -168,6 +168,7 @@ def manifest_entry(
     config: dict[str, Any],
     *,
     artifact_id: str,
+    family: str = "analytics",
     category: str | None,
     report_type: str | None,
     subtype: str | None,
@@ -187,7 +188,7 @@ def manifest_entry(
     row_count = count_gzip_tsv_rows(raw_path) if raw_path else None
     return {
         "artifact_id": artifact_id,
-        "family": "analytics",
+        "family": family,
         "category": category,
         "type": report_type,
         "subtype": subtype,

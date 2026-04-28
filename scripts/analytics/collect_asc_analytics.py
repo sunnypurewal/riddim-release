@@ -382,9 +382,23 @@ def write_segment_once(
 def report_matches(attrs: dict[str, Any], spec: dict[str, Any]) -> bool:
     expected_category = spec.get("category")
     expected_type = spec.get("type") or spec.get("name")
-    return (not expected_category or attrs.get("category") == expected_category) and (
-        not expected_type or attrs.get("name") == expected_type or attrs.get("type") == expected_type
-    )
+    actual_category = attrs.get("category")
+    actual_type = attrs.get("name") or attrs.get("type")
+    return soft_match(expected_category, actual_category) and soft_match(expected_type, actual_type)
+
+
+def soft_match(expected: Any, actual: Any) -> bool:
+    if not expected:
+        return True
+    if not actual:
+        return False
+    expected_key = rekey(expected)
+    actual_key = rekey(actual)
+    return expected_key == actual_key or expected_key in actual_key
+
+
+def rekey(value: Any) -> str:
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
 
 
 def matching_granularities(attrs: dict[str, Any], specs: list[dict[str, Any]]) -> list[str]:

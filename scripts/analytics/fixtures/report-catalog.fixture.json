@@ -37,8 +37,8 @@
       "request_type": "ONGOING",
       "reports": [
         {
-          "category": "APP_STORE_ENGAGEMENT",
-          "type": "App Store Discovery and Engagement Detailed",
+          "category": "APP_STORE",
+          "type": "APP_STORE_DISCOVERY",
           "granularities": [
             "DAILY"
           ]

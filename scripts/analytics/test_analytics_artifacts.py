@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.analytics.artifact import artifact_root, load_json
 from scripts.analytics.asc_client import AscApiError
-from scripts.analytics.collect_asc_analytics import build_plan, collect
+from scripts.analytics.collect_asc_analytics import build_plan, collect, report_matches
 
 
 def gz_bytes(text: str) -> bytes:
@@ -114,6 +114,15 @@ class AnalyticsCollectorTests(unittest.TestCase):
             self.assertEqual(client.created_payloads[0][0], "/v1/analyticsReportRequests")
             self.assertEqual(len(manifest["reports"]), 2)
             self.assertTrue(all(item["status"] == "downloaded" for item in manifest["reports"]))
+
+    def test_catalog_report_codes_match_apple_report_names(self):
+        attrs = {
+            "category": "APP_STORE_ENGAGEMENT",
+            "name": "App Store Discovery and Engagement Detailed",
+        }
+        spec = {"category": "APP_STORE", "type": "APP_STORE_DISCOVERY"}
+
+        self.assertTrue(report_matches(attrs, spec))
 
     def test_downloads_all_segments_and_rerun_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
