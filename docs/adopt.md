@@ -1,46 +1,344 @@
 # Adopting riddim-release in an iOS app
 
-> **Status:** stub. Filled in as part of Epic 1 (story RIDDIM-108: "Adopt-this-framework guide"). The goal is that someone other than the author can take a fresh iOS app repo to first TestFlight build in <30 minutes by following this document.
+This guide takes an iOS app repo from no release tooling to a first TestFlight
+build using `sunnypurewal/riddim-release`. It assumes the app already builds
+locally with Xcode and has an App Store Connect app record.
 
-## Outline (to be filled in)
+Use production callers pinned to `@v1`. Do not call reusable workflows from
+`@main`.
 
-1. **Prerequisites**
-   - Apple Developer team membership (riddimsoftware team `ZG82TFXU3C`)
-   - AWS access — `appstore/connect-api` and `appstore/distribution-cert` Secrets Manager entries
-   - GitHub user-account access — settings to register self-hosted runners and create environments
+## 1. Prerequisites
 
-2. **One-time provisioning**
-   - Confirm the AWS OIDC trust policy on `AWS_RELEASE_ROLE_ARN` covers the new repo
-   - Query the Apple numeric `APPLE_APP_ID` via the ASC API
-   - Set repo variables: `APPLE_APP_ID`, `BUNDLE_ID`, `TEAM_ID`, `SCHEME`, `PRIMARY_LOCALE`, `RUNNER_PROFILE=hosted`, `RUNNER_LABELS_MAC=["macos-15"]`, `RUNNER_LABELS_LINUX=["ubuntu-latest"]`
-   - Set repo secrets: `AWS_RELEASE_ROLE_ARN`, `KEYCHAIN_PASSWORD`, `RUNNER_BUDGET_PAT`
-   - Register a self-hosted macOS runner with labels `self-hosted` and `macOS` (optional but recommended for budget fallback)
-   - Create the `app-store-release` GitHub Environment with required-reviewers
+You need:
 
-3. **Repo scaffolding**
-   - Copy `templates/workflows/*.shim.yml` → `.github/workflows/`
-   - Copy `templates/workflows/budget-watcher.yml` → `.github/workflows/`
-   - Copy `templates/fastlane/*` → `ios/fastlane/`, fill in the ERB placeholders
-   - Add the 5-line `import_from_git` `Fastfile`
-   - Populate `ios/fastlane/metadata/<locale>/*.txt` with App Store copy
-   - Capture screenshots into `ios/fastlane/screenshots/<locale>/`
-   - (Optional) record App Preview via `scripts/marketing/record-app-preview.sh`
+- Apple Developer access for the Riddim team `ZG82TFXU3C`.
+- App Store Connect API key access with permission to read apps/builds and
+  upload metadata.
+- AWS access to the account that stores `appstore/connect-api` and
+  `appstore/distribution-cert` in Secrets Manager.
+- GitHub admin access on the consuming repo.
+- A macOS builder path: GitHub-hosted macOS labels or a repo-scoped
+  self-hosted macOS runner.
 
-4. **First build**
-   - `gh workflow run build-deploy.yml -f bump=patch -f dry_run=true` — confirm green
-   - Re-run without `dry_run` — confirm TestFlight build appears
-   - Smoke-test on device
+Install local tools for setup:
 
-5. **First ASC submission**
-   - QA approves the draft GitHub Release
-   - Publish the release — `release-app-store.yml` fires
-   - Approve via the GitHub Environment gate
-   - Build is submitted with phased release
+```bash
+brew install gh awscli jq ruby python@3
+gh auth login
+aws sts get-caller-identity
+```
 
-## Related docs
+Set these shell variables before running the examples:
 
-- `runner-setup.md` — registering and provisioning a self-hosted macOS runner
-- `aws-provisioning.md` — OIDC trust policy, secret formats
-- `asc-provisioning.md` — querying APPLE_APP_ID, ASC API key scope
-- `budget-watcher.md` — how the hosted/self-hosted flip works
-- `aso-playbook.md` — keeping keywords/screenshots/preview fresh between releases
+```bash
+export OWNER=sunnypurewal
+export REPO=justplayit
+export GH_REPO="$OWNER/$REPO"
+export BUNDLE_ID=com.riddimsoftware.justplayit
+export TEAM_ID=ZG82TFXU3C
+export SCHEME=JustPlayIt
+export XCODEPROJ_PATH=JustPlayIt.xcodeproj
+export IOS_WORKDIR=ios
+export PRIMARY_LOCALE=en-US
+export AWS_RELEASE_ROLE_ARN=arn:aws:iam::<account-id>:role/github-appstore-release
+```
+
+## 2. One-Time Provisioning
+
+### Confirm AWS OIDC trust
+
+The release role must trust the GitHub repo subject
+`repo:sunnypurewal/<app>:*`. See [aws-provisioning.md](aws-provisioning.md)
+for the full trust policy.
+
+```bash
+aws iam get-role \
+  --role-name "$(basename "$AWS_RELEASE_ROLE_ARN")" \
+  --query 'Role.AssumeRolePolicyDocument' \
+  --output json | jq .
+```
+
+### Confirm the ASC secret exists
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id appstore/connect-api \
+  --region us-east-1 \
+  --query SecretString \
+  --output text | jq 'keys'
+```
+
+Expected keys: `key_id`, `issuer_id`, `private_key`.
+
+### Confirm the distribution certificate secret exists
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id appstore/distribution-cert \
+  --region us-east-1 \
+  --query SecretString \
+  --output text | jq 'keys'
+```
+
+Expected keys: `p12_base64`, `password`.
+
+### Query `APPLE_APP_ID`
+
+```bash
+tmpdir=$(mktemp -d)
+aws secretsmanager get-secret-value \
+  --secret-id appstore/connect-api \
+  --region us-east-1 \
+  --query SecretString \
+  --output text > "$tmpdir/asc.json"
+
+python3 - <<'PY' "$tmpdir/asc.json" "$tmpdir/AuthKey.p8" "$BUNDLE_ID"
+import json
+import sys
+import time
+import jwt
+import requests
+
+secret_path, key_path, bundle_id = sys.argv[1:4]
+secret = json.load(open(secret_path))
+open(key_path, "w").write(secret["private_key"])
+now = int(time.time())
+token = jwt.encode(
+    {"iss": secret["issuer_id"], "iat": now, "exp": now + 1200, "aud": "appstoreconnect-v1"},
+    secret["private_key"],
+    algorithm="ES256",
+    headers={"kid": secret["key_id"]},
+)
+resp = requests.get(
+    "https://api.appstoreconnect.apple.com/v1/apps",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"filter[bundleId]": bundle_id, "fields[apps]": "bundleId,name"},
+    timeout=30,
+)
+resp.raise_for_status()
+data = resp.json()["data"]
+if not data:
+    raise SystemExit(f"No ASC app found for bundle id {bundle_id}")
+print(data[0]["id"])
+PY
+```
+
+Save the printed value:
+
+```bash
+export APPLE_APP_ID=<printed-id>
+```
+
+### Set GitHub repo variables
+
+```bash
+gh variable set APPLE_APP_ID        --repo "$GH_REPO" --body "$APPLE_APP_ID"
+gh variable set BUNDLE_ID           --repo "$GH_REPO" --body "$BUNDLE_ID"
+gh variable set TEAM_ID             --repo "$GH_REPO" --body "$TEAM_ID"
+gh variable set SCHEME              --repo "$GH_REPO" --body "$SCHEME"
+gh variable set XCODEPROJ_PATH      --repo "$GH_REPO" --body "$XCODEPROJ_PATH"
+gh variable set IOS_WORKDIR         --repo "$GH_REPO" --body "$IOS_WORKDIR"
+gh variable set PRIMARY_LOCALE      --repo "$GH_REPO" --body "$PRIMARY_LOCALE"
+gh variable set EXTRA_BUNDLE_IDS    --repo "$GH_REPO" --body ""
+gh variable set RUNNER_LABELS_MAC   --repo "$GH_REPO" --body '["macos-15"]'
+gh variable set RUNNER_LABELS_LINUX --repo "$GH_REPO" --body '["ubuntu-latest"]'
+```
+
+If the app has an App Clip or extension, encode extra signing targets as
+space-separated `bundle_id=target_name` pairs:
+
+```bash
+gh variable set EXTRA_BUNDLE_IDS \
+  --repo "$GH_REPO" \
+  --body "com.example.app.Clip=AppClipTarget"
+```
+
+### Set GitHub secrets
+
+```bash
+gh secret set AWS_RELEASE_ROLE_ARN --repo "$GH_REPO" --body "$AWS_RELEASE_ROLE_ARN"
+openssl rand -base64 32 | gh secret set KEYCHAIN_PASSWORD --repo "$GH_REPO"
+```
+
+### Register a self-hosted runner
+
+Hosted macOS works for the default path. For budget fallback or faster local
+builds, register a repo-scoped runner by following
+[runner-setup.md](runner-setup.md).
+
+### Create the `app-store-release` environment
+
+```bash
+gh api --method PUT \
+  "repos/$GH_REPO/environments/app-store-release" \
+  --field wait_timer=0
+```
+
+Add required reviewers in GitHub UI:
+
+`Settings -> Environments -> app-store-release -> Required reviewers`.
+
+## 3. Repo Scaffolding
+
+From the consuming repo root:
+
+```bash
+mkdir -p .github/workflows "$IOS_WORKDIR/fastlane"
+curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/build-deploy.shim.yml \
+  -o .github/workflows/build-deploy.yml
+curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/release-app-store.shim.yml \
+  -o .github/workflows/release-app-store.yml
+curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/deliver-metadata.shim.yml \
+  -o .github/workflows/deliver-metadata.yml
+curl -fsSL https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/budget-watcher.yml \
+  -o .github/workflows/budget-watcher.yml
+```
+
+Copy the fastlane scaffold:
+
+```bash
+for file in Fastfile Appfile.erb Deliverfile.erb Snapfile.erb Pluginfile Gemfile; do
+  curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/fastlane/$file" \
+    -o "$IOS_WORKDIR/fastlane/$file"
+done
+```
+
+Render the ERB placeholders:
+
+```bash
+ruby -rerb -e 'bundle_id=ENV.fetch("BUNDLE_ID"); team_id=ENV.fetch("TEAM_ID"); print ERB.new(File.read(ARGV[0])).result(binding)' \
+  "$IOS_WORKDIR/fastlane/Appfile.erb" > "$IOS_WORKDIR/fastlane/Appfile"
+ruby -rerb -e 'bundle_id=ENV.fetch("BUNDLE_ID"); team_id=ENV.fetch("TEAM_ID"); print ERB.new(File.read(ARGV[0])).result(binding)' \
+  "$IOS_WORKDIR/fastlane/Deliverfile.erb" > "$IOS_WORKDIR/fastlane/Deliverfile"
+ruby -rerb -e 'scheme=ENV.fetch("SCHEME"); primary_locale=ENV.fetch("PRIMARY_LOCALE"); print ERB.new(File.read(ARGV[0])).result(binding)' \
+  "$IOS_WORKDIR/fastlane/Snapfile.erb" > "$IOS_WORKDIR/fastlane/Snapfile"
+rm "$IOS_WORKDIR/fastlane/"*.erb
+```
+
+Confirm the Fastfile imports the shared lanes:
+
+```ruby
+import_from_git(
+  url:    "https://github.com/sunnypurewal/riddim-release.git",
+  branch: "v1",
+  path:   "fastlane/Fastfile"
+)
+```
+
+Populate metadata and media folders:
+
+```bash
+mkdir -p \
+  "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE" \
+  "$IOS_WORKDIR/fastlane/screenshots/$PRIMARY_LOCALE" \
+  "$IOS_WORKDIR/fastlane/app-previews/$PRIMARY_LOCALE"
+
+printf 'App Name\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/name.txt"
+printf 'Short subtitle\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/subtitle.txt"
+printf 'keyword1,keyword2\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/keywords.txt"
+printf 'Support URL\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/support_url.txt"
+printf 'Marketing URL\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/marketing_url.txt"
+printf 'Privacy URL\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/privacy_url.txt"
+printf 'Initial release notes.\n' > "$IOS_WORKDIR/fastlane/metadata/$PRIMARY_LOCALE/release_notes.txt"
+```
+
+Capture screenshots into
+`$IOS_WORKDIR/fastlane/screenshots/$PRIMARY_LOCALE/`. If the app has an App
+Preview test target, see [aso-playbook.md](aso-playbook.md) for the preview
+recording script.
+
+Commit the scaffold:
+
+```bash
+git add .github "$IOS_WORKDIR/fastlane"
+git commit -m "Adopt riddim-release"
+git push
+```
+
+### Sample PleasePlay release config
+
+Use this as a completed value set when reviewing a new app's variables:
+
+```yaml
+repo: sunnypurewal/justplayit
+apple_app_id: "<query from ASC>"
+bundle_id: com.riddimsoftware.justplayit
+team_id: ZG82TFXU3C
+scheme: JustPlayIt
+xcodeproj_path: JustPlayIt.xcodeproj
+ios_workdir: ios
+primary_locale: en-US
+extra_bundle_ids: ""
+runner_labels_mac: '["macos-15"]'
+runner_labels_linux: '["ubuntu-latest"]'
+approval_environment: app-store-release
+aws_release_role_arn: arn:aws:iam::<account-id>:role/github-appstore-release
+```
+
+## 4. First Build
+
+Run a dry run first:
+
+```bash
+gh workflow run build-deploy.yml \
+  --repo "$GH_REPO" \
+  -f bump=patch \
+  -f dry_run=true
+gh run list --repo "$GH_REPO" --workflow build-deploy.yml --limit 3
+```
+
+Open the latest run and confirm the jobs complete:
+
+```bash
+gh run watch --repo "$GH_REPO" "$(gh run list --repo "$GH_REPO" --workflow build-deploy.yml --json databaseId --jq '.[0].databaseId')"
+```
+
+Run the real build:
+
+```bash
+gh workflow run build-deploy.yml \
+  --repo "$GH_REPO" \
+  -f bump=patch \
+  -f dry_run=false
+```
+
+After the run finishes, confirm TestFlight has a new valid build and a draft
+GitHub Release exists:
+
+```bash
+gh release list --repo "$GH_REPO" --limit 5
+```
+
+Install the TestFlight build on a device and smoke-test the release candidate.
+
+## 5. First ASC Submission
+
+When QA accepts the TestFlight build, publish the draft GitHub Release:
+
+```bash
+gh release edit v<version> --repo "$GH_REPO" --draft=false
+```
+
+Publishing the release triggers `.github/workflows/release-app-store.yml`.
+Watch it:
+
+```bash
+gh run list --repo "$GH_REPO" --workflow release-app-store.yml --limit 3
+gh run watch --repo "$GH_REPO" "$(gh run list --repo "$GH_REPO" --workflow release-app-store.yml --json databaseId --jq '.[0].databaseId')"
+```
+
+The `approve-release` job pauses on the `app-store-release` environment.
+Approve it in GitHub after checking the version, build number, tag, upload
+time, and release notes.
+
+The submit job uploads metadata/screenshots, attaches the matching TestFlight
+build, submits for App Store review, sets `automatic_release:false`, and enables
+phased release.
+
+## Related Docs
+
+- [runner-setup.md](runner-setup.md)
+- [aws-provisioning.md](aws-provisioning.md)
+- [asc-provisioning.md](asc-provisioning.md)
+- [budget-watcher.md](budget-watcher.md)
+- [aso-playbook.md](aso-playbook.md)
