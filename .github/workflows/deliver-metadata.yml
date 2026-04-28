@@ -10,6 +10,9 @@ name: Deliver App Store Metadata
 on:
   workflow_call:
     inputs:
+      riddim_actions_app_client_id:
+        required: true
+        type: string
       ios_workdir:
         required: false
         type: string
@@ -29,10 +32,8 @@ on:
     secrets:
       AWS_RELEASE_ROLE_ARN:
         required: true
-      RIDDIM_RELEASE_TOKEN:
-        required: false
-      RUNNER_BUDGET_PAT:
-        required: false
+      riddim_actions_app_private_key:
+        required: true
 
 permissions:
   id-token: write
@@ -52,14 +53,24 @@ jobs:
 
     steps:
       - name: Checkout calling repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Mint riddim-release checkout token
+        id: riddim-release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.riddim_actions_app_client_id }}
+          private-key: ${{ secrets.riddim_actions_app_private_key }}
+          owner: RiddimSoftware
+          repositories: riddim-release
+          permission-contents: read
 
       - name: Checkout riddim-release
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.riddim-release-token.outputs.token }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC

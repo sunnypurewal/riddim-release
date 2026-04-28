@@ -36,12 +36,10 @@ permissions:
 ```
 
 Variable writes use a manually-created PAT stored as `RUNNER_BUDGET_PAT`.
-
-The release workflows also check out the private `RiddimSoftware/riddim-release`
-repo to run shared scripts. Prefer a separate `RIDDIM_RELEASE_TOKEN` secret with
-read-only `Contents` access to that repo. If `RUNNER_BUDGET_PAT` is a classic
-PAT with `repo` access, the workflows can use it as a fallback for this private
-checkout.
+Release workflows do not use this PAT for the private
+`RiddimSoftware/riddim-release` checkout; they mint a tightly scoped GitHub App
+token from `RIDDIM_ACTIONS_APP_CLIENT_ID` and
+`RIDDIM_ACTIONS_APP_PRIVATE_KEY`.
 
 ## Runner Variables
 
@@ -260,14 +258,16 @@ Recommended default: create one PAT per repo and store it as that repo's
 auditable per app.
 
 Alternative: use one shared PAT across several repos, such as PleasePlay,
-bettrack, and BudScience. That is simpler to provision, but the PAT needs `repo`
-access to every repo it manages. If it expires or leaks, every repo using it is
-affected.
+bettrack, and BudScience. That is simpler to provision for budget variable
+writes, but the PAT needs `repo` access to every repo it manages. If it expires
+or leaks, every repo using it is affected.
 
 When adopting another repo:
 
 1. Copy `templates/workflows/budget-watcher.yml` into the app repo.
 2. Create the three `RUNNER_*` variables with hosted defaults.
 3. Add `RUNNER_BUDGET_PAT`.
-4. Trigger the watcher manually and confirm the summary.
-5. Leave the scheduled run enabled.
+4. Ensure the repo can access the org-level `RIDDIM_ACTIONS_APP_CLIENT_ID`
+   variable and `RIDDIM_ACTIONS_APP_PRIVATE_KEY` secret used by release shims.
+5. Trigger the watcher manually and confirm the summary.
+6. Leave the scheduled run enabled.
