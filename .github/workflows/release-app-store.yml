@@ -48,7 +48,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RIDDIM_RELEASE_REF: v1
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
 
 jobs:
   find-build:

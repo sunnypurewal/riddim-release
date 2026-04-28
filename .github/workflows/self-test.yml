@@ -4,9 +4,11 @@ name: Self-test (internal smoke)
 #   AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD
 # and repo variables:
 #   RUNNER_LABELS_MAC (e.g. '["macos-15"]'), RUNNER_LABELS_LINUX (e.g. '["ubuntu-latest"]')
+#   RIDDIM_RELEASE_REF (optional; use "main" before the v1 tag exists)
 #
-# Run with dry_run: true — the DAG executes in order but skips TestFlight upload
-# and draft release creation, so no App Store side-effects occur.
+# Run with dry_run: true - the DAG executes version computation and reusable
+# workflow wiring but skips signing, archive, TestFlight upload, dSYM upload,
+# keychain setup, and draft release creation. No App Store side-effects occur.
 # Not callable externally (no workflow_call trigger).
 
 on:
@@ -23,6 +25,10 @@ on:
         required: false
         type: string
         default: '1224459142'   # epac fixture — safe for version-compute smoke
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   smoke:

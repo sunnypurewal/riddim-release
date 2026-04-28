@@ -35,6 +35,9 @@ concurrency:
   group: deliver-metadata
   cancel-in-progress: true
 
+env:
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+
 jobs:
   deliver:
     name: Push metadata to App Store Connect
@@ -48,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sunnypurewal/riddim-release
-          ref: ${{ env.RIDDIM_RELEASE_REF || 'v1' }}
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC
@@ -73,9 +76,11 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## Metadata delivered to App Store Connect" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Updated fields: description, subtitle, keywords, promotional text, release notes, support/marketing/privacy URLs." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Screenshots and binary were not touched." >> "$GITHUB_STEP_SUMMARY"
-          echo "Changes are visible immediately in App Store Connect and go live to users on the next approved app version." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Metadata delivered to App Store Connect"
+            echo ""
+            echo "Updated fields: description, subtitle, keywords, promotional text, release notes, support/marketing/privacy URLs."
+            echo ""
+            echo "Screenshots and binary were not touched."
+            echo "Changes are visible immediately in App Store Connect and go live to users on the next approved app version."
+          } >> "$GITHUB_STEP_SUMMARY"
