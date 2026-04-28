@@ -34,4 +34,4 @@ gh variable set RUNNER_LABELS_LINUX \
 
 The watcher needs a manually-created `RUNNER_BUDGET_PAT` repo secret. The PAT
 must be able to read user billing usage and write repo variables; use
-`read:user`, `read:billing`, and `repo` scopes.
+`read:user`, `read:billing`, and `repo` scopes. Rotate it every 90 days.

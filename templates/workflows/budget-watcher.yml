@@ -53,6 +53,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Flip to self-hosted if over 85%
+        id: flip
         if: ${{ fromJSON(steps.billing.outputs.pct) >= 85 && vars.RUNNER_PROFILE != 'self-hosted' }}
         env:
           GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
@@ -70,7 +71,14 @@ jobs:
             --repo "$REPO" \
             --body '["self-hosted","macOS"]'
 
+          {
+            printf 'profile=%s\n' 'self-hosted'
+            printf 'mac_labels=%s\n' '["self-hosted","macOS"]'
+            printf 'linux_labels=%s\n' '["self-hosted","macOS"]'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Reset to hosted at start of new cycle
+        id: reset
         if: ${{ fromJSON(steps.billing.outputs.pct) < 5 && vars.RUNNER_PROFILE == 'self-hosted' }}
         env:
           GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
@@ -88,12 +96,30 @@ jobs:
             --repo "$REPO" \
             --body '["ubuntu-latest"]'
 
+          {
+            printf 'profile=%s\n' 'hosted'
+            printf 'mac_labels=%s\n' '["macos-15"]'
+            printf 'linux_labels=%s\n' '["ubuntu-latest"]'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Summary
         env:
           CURRENT_PROFILE: ${{ vars.RUNNER_PROFILE || 'unset' }}
           CURRENT_MAC_LABELS: ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
           CURRENT_LINUX_LABELS: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+          FLIP_PROFILE: ${{ steps.flip.outputs.profile }}
+          FLIP_MAC_LABELS: ${{ steps.flip.outputs.mac_labels }}
+          FLIP_LINUX_LABELS: ${{ steps.flip.outputs.linux_labels }}
+          RESET_PROFILE: ${{ steps.reset.outputs.profile }}
+          RESET_MAC_LABELS: ${{ steps.reset.outputs.mac_labels }}
+          RESET_LINUX_LABELS: ${{ steps.reset.outputs.linux_labels }}
         run: |
+          set -euo pipefail
+
+          final_profile="${FLIP_PROFILE:-${RESET_PROFILE:-$CURRENT_PROFILE}}"
+          final_mac_labels="${FLIP_MAC_LABELS:-${RESET_MAC_LABELS:-$CURRENT_MAC_LABELS}}"
+          final_linux_labels="${FLIP_LINUX_LABELS:-${RESET_LINUX_LABELS:-$CURRENT_LINUX_LABELS}}"
+
           {
             echo "## Runner budget watcher"
             echo ""
@@ -102,6 +128,9 @@ jobs:
             echo "- Runner profile before watcher: $CURRENT_PROFILE"
             echo "- macOS labels before watcher: $CURRENT_MAC_LABELS"
             echo "- Linux labels before watcher: $CURRENT_LINUX_LABELS"
+            echo "- Runner profile after watcher: $final_profile"
+            echo "- macOS labels after watcher: $final_mac_labels"
+            echo "- Linux labels after watcher: $final_linux_labels"
             echo ""
             echo "Thresholds: flip to self-hosted at >= 85%; reset to hosted below 5%."
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
