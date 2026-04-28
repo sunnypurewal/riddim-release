@@ -37,7 +37,7 @@ permissions:
 
 Variable writes use a manually-created PAT stored as `RUNNER_BUDGET_PAT`.
 
-The release workflows also check out the private `sunnypurewal/riddim-release`
+The release workflows also check out the private `RiddimSoftware/riddim-release`
 repo to run shared scripts. Prefer a separate `RIDDIM_RELEASE_TOKEN` secret with
 read-only `Contents` access to that repo. If `RUNNER_BUDGET_PAT` is a classic
 PAT with `repo` access, the workflows can use it as a fallback for this private

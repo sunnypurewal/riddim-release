@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   call:
-    uses: sunnypurewal/riddim-release/.github/workflows/collect-asc-analytics.yml@v1
+    uses: RiddimSoftware/riddim-release/.github/workflows/collect-asc-analytics.yml@v1
     with:
       config_path: docs/analytics/report-catalog.json
       report_date: ${{ inputs.report_date || '' }}

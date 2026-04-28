@@ -2,7 +2,7 @@
 
 Shareable App Store release framework for the riddimsoftware org. Reusable GitHub Actions workflows + a shared fastlane Fastfile + ASC release scripts that consuming iOS app repos wire in via short shim workflows and a 5-line `import_from_git` Fastfile.
 
-Sister to [`evidence`](https://github.com/sunnypurewal/evidence) and [`autopilot`](https://github.com/sunnypurewal/autopilot). PleasePlay is the first consumer; bettrack and BudScience adopt next; epac retrofits onto it once the framework is stable.
+Sister to [`evidence`](https://github.com/RiddimSoftware/evidence) and [`autopilot`](https://github.com/RiddimSoftware/autopilot). PleasePlay is the first consumer; bettrack and BudScience adopt next; epac retrofits onto it once the framework is stable.
 
 ## Status
 
@@ -10,7 +10,7 @@ Sister to [`evidence`](https://github.com/sunnypurewal/evidence) and [`autopilot
 
 ## What it provides
 
-- **4 reusable GitHub Actions workflows** (`build-deploy.yml`, `release-app-store.yml`, `deliver-metadata.yml`, `collect-asc-analytics.yml`) callable via `uses: sunnypurewal/riddim-release/.github/workflows/<name>.yml@v1`.
+- **4 reusable GitHub Actions workflows** (`build-deploy.yml`, `release-app-store.yml`, `deliver-metadata.yml`, `collect-asc-analytics.yml`) callable via `uses: RiddimSoftware/riddim-release/.github/workflows/<name>.yml@v1`.
 - **Shared fastlane lanes** (`deploy`, `deliver`) parameterized by lane options, consumed via `import_from_git`.
 - **ASC release scripts** (`compute_next_version.py`, `find_qualifying_build.py`, `generate_release_notes.py`, `verify_evidence.py`) that talk to the App Store Connect API.
 - **ASC analytics artifact tooling** (`scripts/analytics/`, `docs/analytics-artifact.md`, `docs/asc-analytics.md`) for raw and enriched App Store Connect report data.

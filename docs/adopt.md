@@ -1,7 +1,7 @@
 # Adopting riddim-release in an iOS app
 
 This guide takes an iOS app repo from no release tooling to a first TestFlight
-build using `sunnypurewal/riddim-release`. It assumes the app already builds
+build using `RiddimSoftware/riddim-release`. It assumes the app already builds
 locally with Xcode and has an App Store Connect app record.
 
 Use production callers pinned to `@v1`. Do not call reusable workflows from
@@ -196,7 +196,7 @@ openssl rand -base64 32 | gh secret set KEYCHAIN_PASSWORD --repo "$GH_REPO"
 
 Because `riddim-release` is private, reusable workflows need a token that can
 read this repo when they check out shared scripts. Store a fine-grained PAT with
-read-only `Contents` access to `sunnypurewal/riddim-release` as
+read-only `Contents` access to `RiddimSoftware/riddim-release` as
 `RIDDIM_RELEASE_TOKEN` in each consuming repo:
 
 ```bash
@@ -233,15 +233,15 @@ From the consuming repo root:
 export RIDDIM_RELEASE_REF=v1
 
 mkdir -p .github/workflows "$IOS_WORKDIR/fastlane"
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/build-deploy.shim.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/build-deploy.shim.yml" \
   -o .github/workflows/build-deploy.yml
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/release-app-store.shim.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/release-app-store.shim.yml" \
   -o .github/workflows/release-app-store.yml
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/deliver-metadata.shim.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/deliver-metadata.shim.yml" \
   -o .github/workflows/deliver-metadata.yml
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/budget-watcher.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/budget-watcher.yml" \
   -o .github/workflows/budget-watcher.yml
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/collect-asc-analytics.shim.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/workflows/collect-asc-analytics.shim.yml" \
   -o .github/workflows/collect-asc-analytics.yml
 ```
 
@@ -249,7 +249,7 @@ Copy the fastlane scaffold:
 
 ```bash
 for file in Fastfile Appfile.erb Deliverfile.erb Snapfile.erb Pluginfile Gemfile; do
-  curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/$RIDDIM_RELEASE_REF/templates/fastlane/$file" \
+  curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/$RIDDIM_RELEASE_REF/templates/fastlane/$file" \
     -o "$IOS_WORKDIR/fastlane/$file"
 done
 ```
@@ -274,7 +274,7 @@ Confirm the Fastfile imports the shared lanes:
 
 ```ruby
 import_from_git(
-  url:    "https://github.com/sunnypurewal/riddim-release.git",
+  url:    "https://github.com/RiddimSoftware/riddim-release.git",
   branch: "v1",
   path:   "fastlane/Fastfile"
 )

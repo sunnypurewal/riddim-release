@@ -1,6 +1,6 @@
 # riddim-release template - copy to ios/fastlane/Fastfile and adjust
 import_from_git(
-  url:    "https://github.com/sunnypurewal/riddim-release.git",
+  url:    "https://github.com/RiddimSoftware/riddim-release.git",
   branch: "v1",
   path:   "fastlane/Fastfile"
 )

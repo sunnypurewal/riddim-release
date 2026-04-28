@@ -24,7 +24,7 @@ Copy the workflow shim:
 
 ```bash
 mkdir -p .github/workflows docs/analytics docs/analytics/benchmarks
-curl -fsSL "https://raw.githubusercontent.com/sunnypurewal/riddim-release/v1/templates/workflows/collect-asc-analytics.shim.yml" \
+curl -fsSL "https://raw.githubusercontent.com/RiddimSoftware/riddim-release/v1/templates/workflows/collect-asc-analytics.shim.yml" \
   -o .github/workflows/collect-asc-analytics.yml
 ```
 

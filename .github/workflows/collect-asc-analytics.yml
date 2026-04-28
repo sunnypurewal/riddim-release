@@ -73,7 +73,7 @@ jobs:
       - name: Checkout riddim-release
         uses: actions/checkout@v4
         with:
-          repository: sunnypurewal/riddim-release
+          repository: RiddimSoftware/riddim-release
           ref: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
           token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
