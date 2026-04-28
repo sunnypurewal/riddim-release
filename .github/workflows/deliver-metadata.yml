@@ -29,6 +29,10 @@ on:
     secrets:
       AWS_RELEASE_ROLE_ARN:
         required: true
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
 
 permissions:
   id-token: write
@@ -55,6 +59,7 @@ jobs:
         with:
           repository: sunnypurewal/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
+          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC
@@ -67,6 +72,7 @@ jobs:
         run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Set up Ruby and Fastlane
+        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
