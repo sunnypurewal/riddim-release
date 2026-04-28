@@ -28,7 +28,7 @@ jobs:
       bundle_id:            ${{ vars.BUNDLE_ID }}
       ios_workdir:          ${{ vars.IOS_WORKDIR || 'ios' }}
       primary_locale:       ${{ vars.PRIMARY_LOCALE }}
-      tag:                  ${{ inputs.tag || '' }}
+      tag:                  ${{ github.event.release.tag_name || inputs.tag }}
       dry_run:              ${{ inputs.dry_run || false }}
       approval_environment: ${{ vars.APPROVAL_ENVIRONMENT || 'app-store-release' }}
       runner_labels_mac:    ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
