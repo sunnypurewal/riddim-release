@@ -1,0 +1,179 @@
+{
+  "artifact_version": 1,
+  "tool_version": "riddim-release-analytics/0.1.0",
+  "generated_at": "2026-04-28T02:15:00Z",
+  "app": {
+    "app_id": "1234567890",
+    "bundle_id": "com.riddimsoftware.pleaseplay",
+    "app_slug": "pleaseplay",
+    "provider_id": "123456",
+    "team_id": "ZG82TFXU3C"
+  },
+  "window": {
+    "start_date": "2026-04-27",
+    "end_date": "2026-04-27",
+    "timezone": "America/Toronto"
+  },
+  "business_context": {
+    "jira_keys": [
+      "RIDDIM-123"
+    ],
+    "release_tag": "v1.2.3",
+    "app_version": "1.2.3",
+    "build_number": "456",
+    "locales": [
+      "en-US"
+    ],
+    "territories": [
+      "US",
+      "CA"
+    ],
+    "source_types": [
+      "App Store Search"
+    ],
+    "source_info": [
+      "brand-keyword"
+    ],
+    "marketing_channels": [
+      "app-store-search"
+    ],
+    "notes": "Fixture manifest for contract validation."
+  },
+  "reports": [
+    {
+      "artifact_id": "analytics-app-store-discovery-daily-2026-04-27-seg-001",
+      "family": "analytics",
+      "category": "APP_STORE",
+      "type": "APP_STORE_DISCOVERY",
+      "subtype": null,
+      "granularity": "DAILY",
+      "requested_date": "2026-04-27",
+      "requested_window": null,
+      "request_id": "req-001",
+      "report_id": "report-001",
+      "instance_id": "inst-001",
+      "segment_id": "seg-001",
+      "download_url_source": "/v1/analyticsReportSegments/seg-001/relationships/downloadUrl",
+      "raw_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/raw/analytics/app-store-discovery/daily/2026-04-27/inst-001/seg-001.txt.gz",
+      "downloaded_at": "2026-04-28T02:13:00Z",
+      "checksum_sha256": "b8f5c4a633d8f8f51f8f31fcfb81ed8f6f6fb45c4fbbf0e8328f2f1f939de3aa",
+      "byte_count": 4312,
+      "row_count": 128,
+      "status": "downloaded",
+      "status_reason": null,
+      "normalized_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/normalized/analytics/app-store-discovery/daily/2026-04-27.jsonl",
+      "schema_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/schema/analytics/app-store-discovery/daily.schema.json"
+    },
+    {
+      "artifact_id": "analytics-app-sessions-daily-2026-04-27",
+      "family": "analytics",
+      "category": "APP_USAGE",
+      "type": "APP_SESSIONS",
+      "subtype": null,
+      "granularity": "DAILY",
+      "requested_date": "2026-04-27",
+      "requested_window": null,
+      "request_id": "req-002",
+      "report_id": "report-002",
+      "instance_id": null,
+      "segment_id": null,
+      "download_url_source": "/v1/analyticsReports/report-002/relationships/instances",
+      "raw_path": null,
+      "downloaded_at": null,
+      "checksum_sha256": null,
+      "byte_count": null,
+      "row_count": null,
+      "status": "delayed",
+      "status_reason": "Apple has not generated the requested daily instance yet.",
+      "normalized_path": null,
+      "schema_path": null
+    },
+    {
+      "artifact_id": "sales-summary-daily-2026-04-27",
+      "family": "sales",
+      "category": "SALES_AND_TRENDS",
+      "type": "SALES",
+      "subtype": "SUMMARY",
+      "granularity": "DAILY",
+      "requested_date": "2026-04-27",
+      "requested_window": null,
+      "request_id": null,
+      "report_id": null,
+      "instance_id": null,
+      "segment_id": null,
+      "download_url_source": "/v1/salesReports",
+      "raw_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/raw/sales/daily/2026-04-27/sales-summary.txt.gz",
+      "downloaded_at": "2026-04-28T02:14:00Z",
+      "checksum_sha256": "bb76f62f29709c79f318f430bb5936d0c0d0461f6e4903426cf06b0fd8ecb1ec",
+      "byte_count": 2014,
+      "row_count": 42,
+      "status": "unchanged",
+      "status_reason": null,
+      "normalized_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/normalized/sales/daily/2026-04-27.jsonl",
+      "schema_path": "docs/analytics/app-store-connect/pleaseplay/2026-04-27_2026-04-27/schema/sales/sales-summary.schema.json"
+    },
+    {
+      "artifact_id": "analytics-app-store-source-daily-2026-04-27",
+      "family": "analytics",
+      "category": "APP_STORE",
+      "type": "APP_STORE_SOURCE",
+      "subtype": null,
+      "granularity": "DAILY",
+      "requested_date": "2026-04-27",
+      "requested_window": null,
+      "request_id": "req-003",
+      "report_id": "report-003",
+      "instance_id": "inst-003",
+      "segment_id": null,
+      "download_url_source": "/v1/analyticsReports/report-003/relationships/instances",
+      "raw_path": null,
+      "downloaded_at": null,
+      "checksum_sha256": null,
+      "byte_count": null,
+      "row_count": null,
+      "status": "thresholded",
+      "status_reason": "Apple withheld source rows because the segment did not meet privacy thresholds.",
+      "normalized_path": null,
+      "schema_path": null
+    },
+    {
+      "artifact_id": "finance-us-2026-04",
+      "family": "finance",
+      "category": "FINANCE",
+      "type": "FINANCIAL",
+      "subtype": null,
+      "granularity": "MONTHLY",
+      "requested_date": null,
+      "requested_window": {
+        "fiscal_period": "2026-04",
+        "region": "US"
+      },
+      "request_id": null,
+      "report_id": null,
+      "instance_id": null,
+      "segment_id": null,
+      "download_url_source": "/v1/financeReports",
+      "raw_path": null,
+      "downloaded_at": null,
+      "checksum_sha256": null,
+      "byte_count": null,
+      "row_count": null,
+      "status": "permission_blocked",
+      "status_reason": "The ASC API key cannot access Finance reports.",
+      "normalized_path": null,
+      "schema_path": null
+    }
+  ],
+  "completeness": {
+    "status": "incomplete",
+    "raw_file_count": 2,
+    "normalized_file_count": 2,
+    "schema_file_count": 2,
+    "row_count": 170,
+    "caveats": [
+      "APP_SESSIONS is delayed and must not be interpreted as zero sessions.",
+      "APP_STORE_SOURCE is privacy-thresholded and must not be interpreted as zero source activity.",
+      "Finance reports are permission-blocked for this key."
+    ]
+  }
+}
