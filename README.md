@@ -15,6 +15,8 @@ Sister to [`evidence`](https://github.com/RiddimSoftware/evidence) and [`autopil
 - **ASC release scripts** (`compute_next_version.py`, `find_qualifying_build.py`, `generate_release_notes.py`, `verify_evidence.py`) that talk to the App Store Connect API.
 - **ASC analytics artifact tooling** (`scripts/analytics/`, `docs/analytics-artifact.md`, `docs/asc-analytics.md`) for raw and enriched App Store Connect report data.
 - **Marketing scripts** (`aso-baseline-audit.sh`, `record-app-preview.sh`).
+- **Sprint autopilot** (`sprint-autopilot.yml`) for ending a completed Jira sprint
+  and starting the next one once repo PRs are clear.
 - **Templates** for adopting apps to copy into their own repo (workflow shims, fastlane scaffold, CODEOWNERS, PR template).
 - **Budget-aware runner selection** — workflows pick GitHub-hosted vs self-hosted macOS runners based on each consuming repo's `RUNNER_LABELS_MAC` / `RUNNER_LABELS_LINUX` repo variables, flipped by a scheduled budget watcher when the user-account Actions budget exhausts.
 
@@ -34,6 +36,8 @@ scripts/runner/      runner-side bash helpers (keychain, AWS secret fetch)
 templates/           files an adopting app copies into its own repo
 docs/                onboarding + ops guides
 ```
+
+See `docs/sprint-autopilot.md` for Jira sprint automation setup.
 
 ## License
 
