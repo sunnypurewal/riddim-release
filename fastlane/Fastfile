@@ -64,7 +64,9 @@ platform :ios do
     team_id          = options.fetch(:team_id)
     xcodeproj        = options.fetch(:xcodeproj)
     extra_bundle_ids = options.fetch(:extra_bundle_ids, "")
-    lane_workdir     = Dir.pwd
+    # GITHUB_WORKSPACE is always the checkout root in CI; Dir.pwd may be the
+    # fastlane/ subdirectory depending on how Fastlane initialises the runner.
+    lane_workdir = ENV.fetch("GITHUB_WORKSPACE", Dir.pwd)
 
     api_key = asc_api_key
 
