@@ -31,6 +31,6 @@ jobs:
       tag:                  ${{ github.event.release.tag_name || inputs.tag }}
       dry_run:              ${{ inputs.dry_run || false }}
       approval_environment: ${{ vars.APPROVAL_ENVIRONMENT || 'app-store-release' }}
-      runner_labels_mac:    ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
-      runner_labels_linux:  ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      runner_labels_mac:    ${{ vars.RUNNER_LABELS_MAC || "[\"self-hosted\",\"macOS\"]" }}
+      runner_labels_linux:  ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
     secrets: inherit

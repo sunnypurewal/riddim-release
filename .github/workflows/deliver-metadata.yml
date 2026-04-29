@@ -21,11 +21,17 @@ on:
         required: true
         type: string
       runner_labels_mac:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
       runner_labels_linux:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
     secrets:
       RIDDIM_ACTIONS_APP_PRIVATE_KEY:
         required: false
@@ -50,7 +56,7 @@ env:
 jobs:
   deliver:
     name: Push metadata to App Store Connect
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
 
     steps:
       - name: Generate riddim-release token
@@ -82,7 +88,7 @@ jobs:
         run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Set up Ruby and Fastlane
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'

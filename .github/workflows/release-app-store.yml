@@ -30,11 +30,17 @@ on:
         type: string
         default: "app-store-release"
       runner_labels_mac:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
       runner_labels_linux:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
     secrets:
       RIDDIM_ACTIONS_APP_PRIVATE_KEY:
         required: false
@@ -59,7 +65,7 @@ env:
 jobs:
   find-build:
     name: Find TestFlight build
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     outputs:
       build_number: ${{ steps.find.outputs.build_number }}
       build_version: ${{ steps.find.outputs.build_version }}
@@ -110,7 +116,7 @@ jobs:
         run: .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Install Python dependencies
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         run: python3 -m pip install -r .riddim-release/scripts/release/requirements.txt --quiet
 
       - name: Find build matching release version
@@ -140,7 +146,7 @@ jobs:
   approve-release:
     name: Approve release
     needs: find-build
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     environment: ${{ inputs.approval_environment }}
     steps:
       - name: Generate riddim-release token
@@ -169,7 +175,7 @@ jobs:
       - find-build
       - approve-release
     if: ${{ !inputs.dry_run }}
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     steps:
       - name: Generate riddim-release token
         id: generate-token
@@ -200,7 +206,7 @@ jobs:
         run: .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Set up Ruby and Fastlane
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"

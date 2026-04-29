@@ -32,8 +32,8 @@ jobs:
       primary_locale:      ${{ vars.PRIMARY_LOCALE }}
       bump:                ${{ inputs.bump }}
       dry_run:             ${{ inputs.dry_run }}
-      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
-      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || "[\"self-hosted\",\"macOS\"]" }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
       extra_bundle_ids:    ${{ vars.EXTRA_BUNDLE_IDS || '' }}
       has_app_clip:        ${{ vars.HAS_APP_CLIP == 'true' }}
     secrets: inherit

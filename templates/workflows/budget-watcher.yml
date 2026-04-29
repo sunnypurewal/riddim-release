@@ -1,8 +1,7 @@
 # riddim-release template - copy to .github/workflows/budget-watcher.yml and adjust
 #
 # Polls user-account GitHub Actions billing usage and flips runner variables:
-# - hosted:      RUNNER_LABELS_MAC='["macos-15"]', RUNNER_LABELS_LINUX='["ubuntu-latest"]'
-# - self-hosted: RUNNER_LABELS_MAC='["self-hosted","macOS"]', RUNNER_LABELS_LINUX='["self-hosted","macOS"]'
+# - enforced profile: RUNNER_LABELS_MAC='["self-hosted","macOS"]', RUNNER_LABELS_LINUX='["self-hosted","macOS"]'
 #
 # Required repo secret: RUNNER_BUDGET_PAT
 # Scopes: read:user, read:billing, repo
@@ -20,7 +19,7 @@ permissions:
 jobs:
   watch:
     name: Watch GitHub Actions budget
-    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]') }}
     steps:
       - name: Query billing
         id: billing
@@ -77,9 +76,9 @@ jobs:
             printf 'linux_labels=%s\n' '["self-hosted","macOS"]'
           } >> "$GITHUB_OUTPUT"
 
-      - name: Reset to hosted at start of new cycle
+      - name: Reset to hosted at start of new cycle (disabled while forcing self-hosted)
         id: reset
-        if: ${{ fromJSON(steps.billing.outputs.pct) < 5 && vars.RUNNER_PROFILE == 'self-hosted' }}
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ secrets.RUNNER_BUDGET_PAT }}
           REPO: ${{ github.repository }}
@@ -91,22 +90,22 @@ jobs:
             --body 'hosted'
           gh variable set RUNNER_LABELS_MAC \
             --repo "$REPO" \
-            --body '["macos-15"]'
+            --body '["self-hosted","macOS"]'
           gh variable set RUNNER_LABELS_LINUX \
             --repo "$REPO" \
-            --body '["ubuntu-latest"]'
+            --body '["self-hosted","macOS"]'
 
           {
             printf 'profile=%s\n' 'hosted'
-            printf 'mac_labels=%s\n' '["macos-15"]'
-            printf 'linux_labels=%s\n' '["ubuntu-latest"]'
+            printf 'mac_labels=%s\n' '["self-hosted","macOS"]'
+            printf 'linux_labels=%s\n' '["self-hosted","macOS"]'
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
         env:
           CURRENT_PROFILE: ${{ vars.RUNNER_PROFILE || 'unset' }}
-          CURRENT_MAC_LABELS: ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
-          CURRENT_LINUX_LABELS: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+          CURRENT_MAC_LABELS: ${{ vars.RUNNER_LABELS_MAC || "[\"self-hosted\",\"macOS\"]" }}
+          CURRENT_LINUX_LABELS: ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
           FLIP_PROFILE: ${{ steps.flip.outputs.profile }}
           FLIP_MAC_LABELS: ${{ steps.flip.outputs.mac_labels }}
           FLIP_LINUX_LABELS: ${{ steps.flip.outputs.linux_labels }}
@@ -132,5 +131,5 @@ jobs:
             echo "- macOS labels after watcher: $final_mac_labels"
             echo "- Linux labels after watcher: $final_linux_labels"
             echo ""
-            echo "Thresholds: flip to self-hosted at >= 85%; reset to hosted below 5%."
+            echo "Thresholds: flip to self-hosted at >= 85%; reset step is disabled."
           } | tee -a "$GITHUB_STEP_SUMMARY"

@@ -23,6 +23,6 @@ jobs:
       ios_workdir:         ${{ vars.IOS_WORKDIR || 'ios' }}
       bundle_id:           ${{ vars.BUNDLE_ID }}
       team_id:             ${{ vars.TEAM_ID }}
-      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || '["macos-15"]' }}
-      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || "[\"self-hosted\",\"macOS\"]" }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
     secrets: inherit

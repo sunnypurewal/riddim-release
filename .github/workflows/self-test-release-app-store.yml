@@ -14,18 +14,18 @@ permissions:
 
 jobs:
   release-app-store-fixture:
-    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]') }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate release-app-store workflow syntax
-        if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
+        if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]'), 'self-hosted') }}
         uses: docker://rhysd/actionlint:latest
         with:
           args: .github/workflows/release-app-store.yml .github/workflows/self-test-release-app-store.yml
 
       - name: Validate release-app-store workflow syntax
-        if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
+        if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]'), 'self-hosted') }}
         run: |
           if ! command -v actionlint >/dev/null 2>&1; then
             brew install actionlint
