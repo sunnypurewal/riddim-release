@@ -46,7 +46,7 @@ case "$cmd" in
     security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 
     read_saved_keychain_list "$KEYCHAIN_LIST_BACKUP"
-    security list-keychains -d user -s "$KEYCHAIN_PATH" "${saved_keychains[@]}"
+    security list-keychains -d user -s "$KEYCHAIN_PATH" "${saved_keychains[@]+"${saved_keychains[@]}"}"
     security default-keychain -d user -s "$KEYCHAIN_PATH"
 
     security import /tmp/dist_cert.p12 \
