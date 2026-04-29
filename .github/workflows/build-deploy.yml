@@ -30,7 +30,7 @@ on:
       bump:
         required: false
         type: string
-        default: "patch"
+        default: "minor"
       primary_locale:
         required: false
         type: string
