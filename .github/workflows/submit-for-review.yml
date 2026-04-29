@@ -19,10 +19,6 @@ on:
         type: boolean
         default: true
         description: "Submit to App Store review after attaching. Set false to only attach the build."
-      approval_environment:
-        required: false
-        type: string
-        default: "app-store-release"
       runner_labels_linux:
         required: false
         type: string
@@ -56,7 +52,6 @@ jobs:
   submit:
     name: Attach build and submit for review
     runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
-    environment: ${{ inputs.approval_environment }}
 
     steps:
       - name: Generate riddim-release token
