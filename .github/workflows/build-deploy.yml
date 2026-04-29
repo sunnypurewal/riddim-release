@@ -190,7 +190,7 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Set up Ruby and Bundler
-        if: ${{ !inputs.dry_run && !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_mac), 'self-hosted') }}
+        if: ${{ !inputs.dry_run }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
