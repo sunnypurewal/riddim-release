@@ -79,10 +79,10 @@ class SprintAutopilotTests(unittest.TestCase):
             )
 
         self.assertEqual(result, 0)
-        self.assertEqual(jira.requests[-2]["method"], "PUT")
+        self.assertEqual(jira.requests[-2]["method"], "POST")
         self.assertEqual(jira.requests[-2]["path"], "/rest/agile/1.0/sprint/10")
         self.assertEqual(jira.requests[-2]["payload"], {"state": "closed"})
-        self.assertEqual(jira.requests[-1]["method"], "PUT")
+        self.assertEqual(jira.requests[-1]["method"], "POST")
         self.assertEqual(jira.requests[-1]["path"], "/rest/agile/1.0/sprint/11")
         self.assertEqual(jira.requests[-1]["payload"]["state"], "active")
         self.assertIn("startDate", jira.requests[-1]["payload"])
@@ -109,7 +109,7 @@ class SprintAutopilotTests(unittest.TestCase):
             )
 
         methods = [request["method"] for request in jira.requests]
-        self.assertNotIn("PUT", methods)
+        self.assertNotIn("POST", methods)
 
 
 if __name__ == "__main__":

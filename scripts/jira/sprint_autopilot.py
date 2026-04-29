@@ -217,7 +217,7 @@ def decide(incomplete_issues: list[Issue], open_pull_requests: list[JsonObject])
 
 def close_sprint(client: ApiClient, sprint: Sprint) -> None:
     payload: JsonObject = {"state": "closed"}
-    client.request("PUT", f"/rest/agile/1.0/sprint/{sprint.id}", payload=payload)
+    client.request("POST", f"/rest/agile/1.0/sprint/{sprint.id}", payload=payload)
 
 
 def start_sprint(client: ApiClient, sprint: Sprint, duration_days: int) -> None:
@@ -229,7 +229,7 @@ def start_sprint(client: ApiClient, sprint: Sprint, duration_days: int) -> None:
         "startDate": start,
         "endDate": end,
     }
-    client.request("PUT", f"/rest/agile/1.0/sprint/{sprint.id}", payload=payload)
+    client.request("POST", f"/rest/agile/1.0/sprint/{sprint.id}", payload=payload)
 
 
 def run(
