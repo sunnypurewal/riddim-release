@@ -1,6 +1,45 @@
-Dir[File.expand_path('helpers/*.rb', __dir__)].each { |f| require f }
-
 default_platform(:ios)
+
+# Keep shared lane helpers in this file so Fastlane import_from_git consumers only
+# need to fetch fastlane/Fastfile. Fastlane evaluates imported Fastfiles in the
+# consuming app context, where this repo's fastlane/helpers directory is not
+# present.
+def asc_api_key
+  app_store_connect_api_key(
+    key_id:       ENV.fetch("ASC_KEY_ID"),
+    issuer_id:    ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: File.expand_path(
+      "~/.appstoreconnect/private_keys/AuthKey_#{ENV.fetch('ASC_KEY_ID')}.p8"
+    ),
+    duration:  1200,
+    in_house:  false
+  )
+end
+
+# extra_bundles: array of [bundle_id, target_name] pairs.
+# Built from the deploy lane's extra_bundle_ids option, which is a space-separated
+# list of "bundle_id=target_name" strings (e.g. "net.dinglebox.cabinetdoor.Clip=epac-clip").
+# Apps without extensions pass extra_bundle_ids:"" and extra_bundles becomes [].
+def bake_manual_signing(xcodeproj:, team_id:, primary_target:, primary_bundle:, extra_bundles:, api_key:)
+  all_bundles = [[primary_bundle, primary_target]] + extra_bundles
+
+  all_bundles.each do |bundle_id, target_name|
+    profile_uuid = sigh(
+      api_key:        api_key,
+      app_identifier: bundle_id,
+      force:          false
+    )
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path:                  xcodeproj,
+      team_id:               team_id,
+      targets:               [target_name],
+      code_sign_identity:    "Apple Distribution",
+      profile_uuid:          profile_uuid
+    )
+  end
+end
 
 platform :ios do
   desc "Upload App Store metadata (no binary, no review submission)"
