@@ -1,0 +1,31 @@
+# riddim-release template - copy to .github/workflows/website-preview.yml and adjust
+# Requires repo variables: AMPLIFY_APP_ID, AWS_REGION, AWS_WEBSITE_PREVIEW_ROLE_ARN
+name: Website Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  preview:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: RiddimSoftware/riddim-release/.github/workflows/website-preview.yml@v1
+    with:
+      amplify_app_id: ${{ vars.AMPLIFY_APP_ID }}
+      aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      aws_role_arn: ${{ vars.AWS_WEBSITE_PREVIEW_ROLE_ARN }}
+      pr_number: ${{ github.event.pull_request.number }}
+      source_ref: ${{ github.event.pull_request.head.ref }}
+      source_sha: ${{ github.event.pull_request.head.sha }}
+      site_root: "."
+      build_command: ""
+      publish_dir: ""
+      production_branch: "main"
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+    secrets: inherit
