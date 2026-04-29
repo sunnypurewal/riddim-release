@@ -201,6 +201,8 @@ jobs:
         if: ${{ !inputs.dry_run && (inputs.force_self_hosted || contains(fromJSON(inputs.runner_labels_mac), 'self-hosted')) }}
         working-directory: ${{ inputs.ios_workdir }}
         run: |
+          export BUNDLE_VERSION=system
+          echo "BUNDLE_VERSION=system" >> "$GITHUB_ENV"
           bundle config set path vendor/bundle
           bundle install --jobs 4 --retry 3
 
