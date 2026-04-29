@@ -91,12 +91,13 @@ def patch_age_rating(app_id, token):
     })
     all_infos = resp.get("data", [])
     # appInfos doesn't support filter[appStoreState] — filter client-side.
+    # DEVELOPER_REJECTED is the withdrawal state; still needs the age rating patch.
     app_infos = [
         i for i in all_infos
-        if i["attributes"].get("appStoreState") == "PREPARE_FOR_SUBMISSION"
+        if i["attributes"].get("appStoreState") in ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED")
     ]
     if not app_infos:
-        print("WARNING: No appInfo in PREPARE_FOR_SUBMISSION — skipping age rating patch.")
+        print("WARNING: No appInfo in PREPARE_FOR_SUBMISSION or DEVELOPER_REJECTED — skipping age rating patch.")
         return
 
     # The included ageRatingDeclaration shares its ID with the appInfo.
@@ -151,16 +152,20 @@ def main():
 
     token = make_token()
 
-    # 1 — find the App Store version in PREPARE_FOR_SUBMISSION
+    # 1 — find the App Store version ready for (re)submission.
+    # PREPARE_FOR_SUBMISSION: normal first-time submission.
+    # DEVELOPER_REJECTED: developer withdrew from review; can resubmit without
+    #   resetting to PREPARE_FOR_SUBMISSION via the reviewSubmissions API.
     resp = api("GET", f"/apps/{app_id}/appStoreVersions", token, params={
-        "filter[appStoreState]": "PREPARE_FOR_SUBMISSION",
+        "filter[appStoreState]": "PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED",
         "fields[appStoreVersions]": "versionString,appStoreState",
     })
     versions = resp.get("data", [])
     if not versions:
         print(
-            "ERROR: No App Store version found in PREPARE_FOR_SUBMISSION state. "
-            "Create one in App Store Connect before running this workflow.",
+            "ERROR: No App Store version found in PREPARE_FOR_SUBMISSION or "
+            "DEVELOPER_REJECTED state. Create one in App Store Connect before "
+            "running this workflow.",
             file=sys.stderr,
         )
         sys.exit(1)
