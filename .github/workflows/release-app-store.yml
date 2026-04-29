@@ -67,6 +67,14 @@ jobs:
       tag: ${{ steps.resolve-tag.outputs.tag }}
       version: ${{ steps.resolve-tag.outputs.version }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Check out caller repository
         uses: actions/checkout@v4
 
@@ -135,6 +143,14 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
     environment: ${{ inputs.approval_environment }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Release candidate summary
         run: |
           echo "## Release candidate ready for approval"
@@ -155,6 +171,14 @@ jobs:
     if: ${{ !inputs.dry_run }}
     runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Check out caller repository
         uses: actions/checkout@v4
 
