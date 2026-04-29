@@ -1,0 +1,89 @@
+name: Website Preview Cleanup (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      amplify_app_id:
+        required: true
+        type: string
+      aws_region:
+        required: false
+        type: string
+        default: us-east-1
+      aws_role_arn:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      preview_branch_prefix:
+        required: false
+        type: string
+        default: "pr"
+      preview_environment:
+        required: false
+        type: string
+        default: "website-preview"
+      runner_labels_linux:
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+    secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+
+jobs:
+  cleanup:
+    name: Delete preview branch
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    environment: ${{ inputs.preview_environment }}
+    steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
+
+      - name: Check out riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          path: .riddim-release
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Delete preview branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/amplify_delete_branch.py \
+            --app-id "${{ inputs.amplify_app_id }}" \
+            --branch "${{ inputs.preview_branch_prefix }}-${{ inputs.pr_number }}"
+
+      - name: Comment cleanup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ inputs.pr_number }}" --body "Deleted website preview branch \`${{ inputs.preview_branch_prefix }}-${{ inputs.pr_number }}\`."

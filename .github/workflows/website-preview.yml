@@ -1,0 +1,192 @@
+name: Website Preview (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      amplify_app_id:
+        required: true
+        type: string
+      aws_region:
+        required: false
+        type: string
+        default: us-east-1
+      aws_role_arn:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      source_ref:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+      site_root:
+        required: false
+        type: string
+        default: "."
+      build_command:
+        required: false
+        type: string
+        default: ""
+      publish_dir:
+        required: false
+        type: string
+        default: ""
+      preview_branch_prefix:
+        required: false
+        type: string
+        default: "pr"
+      production_branch:
+        required: false
+        type: string
+        default: "main"
+      preview_environment:
+        required: false
+        type: string
+        default: "website-preview"
+      runner_labels_linux:
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+    secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+
+jobs:
+  preview:
+    name: Deploy preview
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    environment:
+      name: ${{ inputs.preview_environment }}
+      url: ${{ steps.vars.outputs.preview_url }}
+    outputs:
+      preview_url: ${{ steps.vars.outputs.preview_url }}
+      preview_branch: ${{ steps.vars.outputs.preview_branch }}
+    steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
+
+      - name: Resolve preview settings
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_branch="${{ inputs.preview_branch_prefix }}-${{ inputs.pr_number }}"
+          preview_url="https://${preview_branch}.${{ inputs.amplify_app_id }}.amplifyapp.com/"
+          echo "preview_branch=${preview_branch}" >> "$GITHUB_OUTPUT"
+          echo "preview_url=${preview_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out website
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Check out riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          path: .riddim-release
+
+      - name: Package website
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/package_static_site.py \
+            --source-dir "${{ inputs.site_root }}" \
+            --publish-dir "${{ inputs.publish_dir }}" \
+            --build-command "${{ inputs.build_command }}" \
+            --output site.zip \
+            --manifest website-preview-manifest.json \
+            --preview-branch "${{ steps.vars.outputs.preview_branch }}" \
+            --preview-url "${{ steps.vars.outputs.preview_url }}" \
+            --production-branch "${{ inputs.production_branch }}" \
+            --pr-number "${{ inputs.pr_number }}" \
+            --source-ref "${{ inputs.source_ref }}" \
+            --source-sha "${{ inputs.source_sha }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Deploy Amplify preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/amplify_deploy.py \
+            --app-id "${{ inputs.amplify_app_id }}" \
+            --branch "${{ steps.vars.outputs.preview_branch }}" \
+            --artifact site.zip \
+            --stage DEVELOPMENT \
+            --create-branch
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-preview-pr-${{ inputs.pr_number }}
+          path: |
+            site.zip
+            website-preview-manifest.json
+          retention-days: 30
+
+      - name: Comment preview URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_URL: ${{ steps.vars.outputs.preview_url }}
+          PREVIEW_BRANCH: ${{ steps.vars.outputs.preview_branch }}
+        run: |
+          set -euo pipefail
+          marker="<!-- riddim-website-preview:${{ inputs.pr_number }} -->"
+          body="${marker}
+          Website preview is ready:
+          ${PREVIEW_URL}
+
+          Amplify branch: \`${PREVIEW_BRANCH}\`
+          Commit: \`${{ inputs.source_sha }}\`"
+
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ inputs.pr_number }}/comments" \
+            --jq ".[] | select(.body | contains(\"${marker}\")) | .id" | head -1)"
+
+          if [[ -n "$existing" ]]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" \
+              --method PATCH \
+              -f body="$body" >/dev/null
+          else
+            gh pr comment "${{ inputs.pr_number }}" --body "$body"
+          fi
+
+      - name: Preview summary
+        shell: bash
+        run: |
+          {
+            echo "## Website preview"
+            echo ""
+            echo "- URL: ${{ steps.vars.outputs.preview_url }}"
+            echo "- Branch: ${{ steps.vars.outputs.preview_branch }}"
+            echo "- Commit: ${{ inputs.source_sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"

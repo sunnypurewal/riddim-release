@@ -1,12 +1,12 @@
 # riddim-release
 
-Reusable App Store release infrastructure for Riddim iOS apps.
+Reusable release infrastructure for Riddim apps and websites.
 
-`riddim-release` packages the release work every app repo used to own itself:
-GitHub Actions workflows, Fastlane lanes, App Store Connect scripts, runner
-helpers, adoption templates, and operational docs. Consuming app repos copy thin
-workflow shims and a small Fastlane scaffold, then call the stable reusable
-workflows from this repo.
+`riddim-release` packages the release work every app or website repo used to
+own itself: GitHub Actions workflows, Fastlane lanes, App Store Connect scripts,
+Amplify website deploy helpers, runner helpers, adoption templates, and
+operational docs. Consuming repos copy thin workflow shims and app-specific
+scaffolding, then call the stable reusable workflows from this repo.
 
 The intended result is boring release operations:
 
@@ -16,6 +16,8 @@ The intended result is boring release operations:
 - push App Store metadata without shipping a binary
 - collect App Store Connect analytics as reproducible artifacts
 - keep runner selection centralized in repository variables
+- deploy website PR previews and promote the exact approved artifact to
+  production behind a GitHub Environment approval gate
 
 ## Status
 
@@ -42,10 +44,10 @@ workflow, template, or lane contract changes require a new major tag.
 
 ## Who This Is For
 
-Use this repo when you maintain a Riddim iOS app and want the shared release
-pipeline instead of rebuilding App Store automation in that app repo.
+Use this repo when you maintain a Riddim iOS app or static website and want the
+shared release pipeline instead of rebuilding release automation in each repo.
 
-This repo assumes the app already has:
+For iOS apps, this repo assumes the app already has:
 
 - an Xcode project that builds locally; workspace-based apps may need
   app-specific Fastlane adjustments
@@ -54,6 +56,9 @@ This repo assumes the app already has:
 - GitHub Actions enabled
 - AWS access to the release secrets account
 - either GitHub-hosted macOS minutes or a repo-scoped self-hosted macOS runner
+
+For websites, this repo assumes the site already has an AWS Amplify app and
+GitHub OIDC roles for preview and production deployments.
 
 This repo is not an installed CLI. The primary user surface is GitHub Actions.
 The Python and shell files under `scripts/` are script-style tools used by those
@@ -271,6 +276,9 @@ TestFlight build with the matching marketing version, and submits that build.
 | `.github/workflows/release-app-store.yml` | `release-app-store.yml` shim | Submit the release-tagged TestFlight build to App Store review |
 | `.github/workflows/deliver-metadata.yml` | `deliver-metadata.yml` shim | Push App Store listing metadata without uploading a binary |
 | `.github/workflows/collect-asc-analytics.yml` | `collect-asc-analytics.yml` shim | Collect and normalize App Store Connect analytics artifacts |
+| `.github/workflows/website-preview.yml` | `website-preview.yml` shim | Deploy an Amplify preview branch for a website PR |
+| `.github/workflows/website-promote.yml` | `website-promote.yml` shim | Promote the exact preview artifact to the production Amplify branch |
+| `.github/workflows/website-cleanup.yml` | `website-cleanup.yml` shim | Delete an abandoned website preview branch |
 | `.github/workflows/sprint-autopilot.yml` | Used in this repo | End a completed Jira sprint and start the next one when work is clear |
 
 ### Shared Fastlane lanes
