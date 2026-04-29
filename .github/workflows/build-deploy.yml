@@ -190,12 +190,19 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Set up Ruby and Bundler
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_mac), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
           bundler-cache: true
           working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Install Ruby bundle
+        if: ${{ !inputs.dry_run && (inputs.force_self_hosted || contains(fromJSON(inputs.runner_labels_mac), 'self-hosted')) }}
+        working-directory: ${{ inputs.ios_workdir }}
+        run: |
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
 
       - name: Configure AWS credentials via OIDC
         if: ${{ !inputs.dry_run }}
