@@ -87,10 +87,14 @@ def patch_age_rating(app_id, token):
     intentional values set in App Store Connect.
     """
     resp = api("GET", f"/apps/{app_id}/appInfos", token, params={
-        "filter[appStoreState]": "PREPARE_FOR_SUBMISSION",
         "include": "ageRatingDeclaration",
     })
-    app_infos = resp.get("data", [])
+    all_infos = resp.get("data", [])
+    # appInfos doesn't support filter[appStoreState] — filter client-side.
+    app_infos = [
+        i for i in all_infos
+        if i["attributes"].get("appStoreState") == "PREPARE_FOR_SUBMISSION"
+    ]
     if not app_infos:
         print("WARNING: No appInfo in PREPARE_FOR_SUBMISSION — skipping age rating patch.")
         return
