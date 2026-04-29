@@ -1,12 +1,6 @@
 name: Self Test Release App Store
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/release-app-store.yml"
-      - ".github/workflows/self-test-release-app-store.yml"
-      - "scripts/release/find_qualifying_build.py"
-      - "scripts/release/test_find_qualifying_build.py"
   workflow_dispatch:
 
 permissions:

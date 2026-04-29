@@ -1,14 +1,6 @@
 name: Self Test ASC Analytics
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/collect-asc-analytics.yml"
-      - ".github/workflows/self-test-analytics.yml"
-      - "docs/analytics-artifact.md"
-      - "docs/asc-analytics.md"
-      - "scripts/analytics/**"
-      - "templates/workflows/collect-asc-analytics.shim.yml"
   workflow_dispatch:
 
 permissions:
