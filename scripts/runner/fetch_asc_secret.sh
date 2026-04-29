@@ -21,15 +21,18 @@ P8_PATH=~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
 printf '%s' "$PRIVATE_KEY" > "$P8_PATH"
 chmod 600 "$P8_PATH"
 
-# Write fastlane-compatible API key JSON (used by release-app-store.yml deliver calls).
-cat > /tmp/asc_api_key.json <<JSON
-{
-  "key_id": "${KEY_ID}",
-  "issuer_id": "${ISSUER_ID}",
-  "key": "${PRIVATE_KEY}",
-  "in_house": false
-}
-JSON
+# Write fastlane-compatible API key JSON. Use jq so multiline private keys are
+# escaped correctly for Fastlane's JSON parser.
+jq -n \
+  --arg key_id "$KEY_ID" \
+  --arg issuer_id "$ISSUER_ID" \
+  --arg key "$PRIVATE_KEY" \
+  '{
+    key_id: $key_id,
+    issuer_id: $issuer_id,
+    key: $key,
+    in_house: false
+  }' > /tmp/asc_api_key.json
 chmod 600 /tmp/asc_api_key.json
 
 # Export to GitHub Actions environment for subsequent steps in the same job.
