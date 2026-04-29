@@ -245,6 +245,8 @@ jobs:
             skip_screenshots:false \
             skip_metadata:false \
             submit_for_review:false \
+            run_precheck_before_submit:false \
+            precheck_include_in_app_purchases:false \
             force:true
 
       - name: Submit build for App Store review
@@ -257,6 +259,8 @@ jobs:
             skip_screenshots:true \
             skip_metadata:true \
             submit_for_review:true \
+            run_precheck_before_submit:false \
+            precheck_include_in_app_purchases:false \
             force:true \
             phased_release:true \
             automatic_release:false \
