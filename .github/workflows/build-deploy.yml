@@ -54,6 +54,8 @@ on:
         required: true
         type: string   # JSON-encoded array, e.g. '["ubuntu-latest"]'
     secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
       AWS_RELEASE_ROLE_ARN:
         required: true
       KEYCHAIN_PASSWORD:
@@ -96,6 +98,14 @@ jobs:
     outputs:
       next_version: ${{ steps.version.outputs.next_version }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -111,7 +121,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Fetch ASC credentials
@@ -140,6 +150,14 @@ jobs:
     outputs:
       build_number: ${{ steps.build-number.outputs.build_number }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - uses: actions/checkout@v4
 
       - name: Checkout riddim-release
@@ -147,7 +165,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Select Xcode
@@ -208,7 +226,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}@github.com/.insteadOf
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ steps.generate-token.outputs.token || secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}@github.com/.insteadOf
           GIT_CONFIG_VALUE_0: https://github.com/
         run: |
           bundle exec fastlane deploy \
@@ -256,6 +274,14 @@ jobs:
     needs: [compute-version, build-upload]
     if: ${{ !inputs.dry_run }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -265,7 +291,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Generate release notes
