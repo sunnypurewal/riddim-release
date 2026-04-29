@@ -100,7 +100,7 @@ jobs:
     steps:
       - name: Generate riddim-release token
         id: generate-token
-        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
@@ -152,7 +152,7 @@ jobs:
     steps:
       - name: Generate riddim-release token
         id: generate-token
-        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
@@ -276,7 +276,7 @@ jobs:
     steps:
       - name: Generate riddim-release token
         id: generate-token
-        if: ${{ vars.RIDDIM_ACTIONS_APP_ID && secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
