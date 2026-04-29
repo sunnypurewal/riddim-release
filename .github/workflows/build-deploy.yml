@@ -95,6 +95,7 @@ concurrency:
 
 env:
   RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}   # pin callers to stable v1; override for pre-tag self-tests
+  FASTLANE_SKIP_UPDATE_CHECK: "1"
 
 jobs:
   # ─── Job 1: Determine the next version ─────────────────────────────────────
