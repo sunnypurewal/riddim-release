@@ -106,14 +106,17 @@ jobs:
           page=1
           all_prs="[]"
           while true; do
-            batch="$(gh api \
+            page_payload="$(gh api \
               "repos/${CONSUMER_REPO}/pulls?state=open&per_page=100&page=${page}" \
-              --jq "[.[] | select(.labels[].name == \"${AUTONOMOUS_LABEL}\") | {number: .number, head_sha: .head.sha, head_ref: .head.ref, base_ref: .base.ref}]")"
+              )"
+
+            page_count="$(printf '%s' "$page_payload" | jq 'length')"
+            batch="$(printf '%s' "$page_payload" | jq "[.[] | select(.labels[].name == \"${AUTONOMOUS_LABEL}\") | {number: .number, head_sha: .head.sha, head_ref: .head.ref, base_ref: .base.ref}]")"
 
             count="$(printf '%s' "$batch" | jq 'length')"
             all_prs="$(printf '%s\n%s' "$all_prs" "$batch" | jq -s 'add | unique_by(.number)')"
 
-            if (( count < 100 )); then
+            if (( page_count < 100 )); then
               break
             fi
             page=$(( page + 1 ))
@@ -188,14 +191,10 @@ jobs:
                   echo "  [dry-run] Would dispatch agent-rebase (E9) for PR #${pr_number}."
                 else
                   echo "  Dispatching agent-rebase (E9) for PR #${pr_number}..."
-                  CONSUMER_OWNER="$(echo "$CONSUMER_REPO" | cut -d'/' -f1)"
-                  CONSUMER_REPO_NAME="$(echo "$CONSUMER_REPO" | cut -d'/' -f2)"
                   gh workflow run agent-rebase.yml \
                     --repo RiddimSoftware/riddim-release \
-                    --field owner="$CONSUMER_OWNER" \
-                    --field repo="$CONSUMER_REPO_NAME" \
+                    --field consumer_repo="$CONSUMER_REPO" \
                     --field pr_number="$pr_number" \
-                    --field pr_branch="$head_ref" \
                     --field base_branch="$base_ref"
                 fi
                 routed_dirty=$(( routed_dirty + 1 ))
@@ -209,7 +208,7 @@ jobs:
                 skipped=$(( skipped + 1 ))
                 ;;
               unknown)
-                echo "  ::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
+                echo "::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
                 errors=$(( errors + 1 ))
                 ;;
               *)
