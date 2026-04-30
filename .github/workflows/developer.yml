@@ -121,10 +121,12 @@ on:
     secrets:
       claude_code_oauth_token:
         required: true
-      dev_bot_app_id:
+      DEV_BOT_APP_ID:
         required: true
-      dev_bot_private_key:
+      DEV_BOT_PRIVATE_KEY:
         required: true
+      # dev_bot_pat replaced by GitHub App credentials (DEV_BOT_APP_ID + DEV_BOT_PRIVATE_KEY)
+      # Token is minted at runtime via actions/create-github-app-token@v1
 
 # One developer run per issue/PR at a time. Cancel stale runs on new pushes.
 concurrency:
@@ -143,8 +145,8 @@ jobs:
         id: dev-bot-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.dev_bot_app_id }}
-          private-key: ${{ secrets.dev_bot_private_key }}
+          app-id: ${{ secrets.DEV_BOT_APP_ID }}
+          private-key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       # ── agent:pause kill-switch — first step, no checkout needed ──────────

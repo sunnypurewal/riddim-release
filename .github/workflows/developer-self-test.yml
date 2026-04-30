@@ -50,7 +50,8 @@ jobs:
     uses: ./.github/workflows/developer.yml
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+      DEV_BOT_APP_ID: ${{ secrets.DEV_BOT_APP_ID }}
+      DEV_BOT_PRIVATE_KEY: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
     with:
       trigger_type: issue_labeled
       issue_number: ${{ fromJSON(inputs.issue_number) }}
