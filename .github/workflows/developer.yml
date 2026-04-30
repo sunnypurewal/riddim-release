@@ -1,0 +1,241 @@
+# ============================================================================
+# developer.yml — Reusable autonomous developer-agent workflow
+# RiddimSoftware/riddim-release
+#
+# SHARED INFRASTRUCTURE — HIGH BLAST RADIUS
+# All consumers pinned to @main run this file. Validate changes with the
+# workflow_dispatch self-test path BEFORE merging. See docs/agent-loop/README.md.
+#
+# USAGE IN A CONSUMER REPO:
+#
+#   on:
+#     issues:
+#       types: [labeled]
+#     pull_request_review:
+#       types: [submitted]
+#
+#   jobs:
+#     developer:
+#       # Initial build: issue labeled agent:build
+#       if: >
+#         (github.event_name == 'issues' &&
+#          github.event.label.name == 'agent:build' &&
+#          !contains(github.event.issue.labels.*.name, 'agent:pause')) ||
+#         (github.event_name == 'pull_request_review' &&
+#          github.event.review.state == 'changes_requested' &&
+#          github.event.review.user.login == 'reviewer-bot[bot]' &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:needs-human') &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:attempt-3'))
+#       uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
+#       secrets:
+#         claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#         dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+#       with:
+#         trigger_type: ${{ github.event_name == 'issues' && 'issue_labeled' || 'changes_requested' }}
+#         issue_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+#         issue_body: ${{ github.event.issue.body || '' }}
+#         pr_number: ${{ github.event.pull_request.number || 0 }}
+#
+# SECRETS REQUIRED (org-level, selected-repo access):
+#   CLAUDE_CODE_OAUTH_TOKEN — Max-plan OAuth token (via `claude setup-token`)
+#   DEV_BOT_PAT             — developer-bot installation token or fine-grained PAT
+#
+# FALLBACK: If claude-code-action@v1 stops accepting claude_code_oauth_token,
+# pass ANTHROPIC_API_KEY instead:
+#   with:
+#     anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+# ============================================================================
+
+name: Developer Agent (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      trigger_type:
+        description: "'issue_labeled' for initial build, 'changes_requested' for fix-up"
+        required: true
+        type: string
+
+      issue_number:
+        description: "Issue number (initial build) or PR number (fix-up)"
+        required: true
+        type: number
+
+      issue_body:
+        description: "Issue body text (initial build only)"
+        required: false
+        type: string
+        default: ""
+
+      pr_number:
+        description: "PR number for fix-up cycle (0 if initial build)"
+        required: false
+        type: number
+        default: 0
+
+      prompt_override:
+        description: "Optional: fully override the agent prompt (advanced use only)"
+        required: false
+        type: string
+        default: ""
+
+      max_diff_lines:
+        description: "Max changed lines before guard blocks the run (default 500)"
+        required: false
+        type: number
+        default: 500
+
+    secrets:
+      claude_code_oauth_token:
+        required: true
+      dev_bot_pat:
+        required: true
+
+# One developer run per issue/PR at a time. Cancel stale runs on new pushes.
+concurrency:
+  group: developer-${{ github.repository }}-${{ inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  run-developer-agent:
+    name: Developer Agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── Safety guard ──────────────────────────────────────────────────────
+      - name: Run safety guard
+        if: inputs.trigger_type == 'changes_requested'
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/RiddimSoftware/riddim-release/main/.github/scripts/guard.sh \
+            -o /tmp/guard.sh
+          chmod +x /tmp/guard.sh
+          /tmp/guard.sh "${{ inputs.pr_number }}"
+
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.dev_bot_pat }}
+          fetch-depth: 0
+
+      # ── Assemble prompt ───────────────────────────────────────────────────
+      - name: Assemble agent prompt
+        id: prompt
+        env:
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            echo "prompt<<PROMPT_EOF" >> "$GITHUB_OUTPUT"
+            echo "$PROMPT_OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "PROMPT_EOF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            # ── Initial build prompt ─────────────────────────────────────────
+            ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title -q '.title')
+
+            cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
+          prompt<<PROMPT_DELIMITER
+          You are an autonomous developer agent. Your task is to implement the GitHub issue below.
+
+          Repository: $REPO
+          Issue #$ISSUE_NUMBER: $ISSUE_TITLE
+
+          Issue body:
+          $ISSUE_BODY
+
+          Instructions:
+          1. Create a new branch named: agent/issue-$ISSUE_NUMBER
+          2. Implement the feature or fix described in the issue. Write clean, idiomatic code.
+          3. Run the project's tests if any exist (check Makefile, package.json, etc.).
+          4. Stage all changes and commit with message: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
+          5. Push the branch to origin.
+          6. Open a pull request against main with:
+             - Title: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
+             - Body: describe what was changed and why, reference "Closes #$ISSUE_NUMBER"
+          7. Add the label 'agent:build' to the PR.
+          8. Enable auto-merge: gh pr merge --auto --squash <PR-NUMBER> --repo $REPO
+
+          Important: Stay within the scope of the issue. Do not refactor unrelated code.
+          PROMPT_DELIMITER
+          PROMPT_EOF
+
+          else
+            # ── Fix-up prompt ────────────────────────────────────────────────
+            PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body')
+            REVIEW_COMMENTS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json reviews \
+              --jq '[.reviews[] | select(.state == "CHANGES_REQUESTED")] | last | .body')
+            INLINE_COMMENTS=$(gh api \
+              "repos/$REPO/pulls/$PR_NUMBER/comments" \
+              --jq '[.[] | {path:.path, line:.line, body:.body}] | .[:20] | map("File: \(.path) line \(.line)\n\(.body)") | join("\n\n")' 2>/dev/null || echo "")
+
+            cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
+          prompt<<PROMPT_DELIMITER
+          You are an autonomous developer agent. Your task is to address review feedback on a pull request.
+
+          Repository: $REPO
+          PR #$PR_NUMBER
+
+          Review comment requiring changes:
+          $REVIEW_COMMENTS
+
+          Inline comments (up to 20):
+          $INLINE_COMMENTS
+
+          Original PR description:
+          $PR_BODY
+
+          Instructions:
+          1. Check out the PR branch: gh pr checkout $PR_NUMBER --repo $REPO
+          2. Address ALL review comments and inline comments. Explain any you disagree with in PR comments.
+          3. Run the project's tests if any exist.
+          4. Commit changes with: "fix: address review feedback on PR #$PR_NUMBER"
+          5. Push to the same branch.
+          6. Do NOT re-request review — the reviewer workflow handles that.
+
+          Important: Only fix what was raised in the review. Scope creep will cause another rejection.
+          PROMPT_DELIMITER
+          PROMPT_EOF
+          fi
+
+      # ── Run Claude Code agent ─────────────────────────────────────────────
+      - name: Run developer agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          timeout_minutes: "25"
+
+      # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
+      - name: Enable auto-merge on PR (fix-up path)
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr merge --auto --squash "${{ inputs.pr_number }}" --repo "$REPO" 2>/dev/null || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Self-test: validates the workflow runs without error on a synthetic input.
+  # Triggered only from riddim-release via workflow_dispatch (not consumed
+  # by external callers).
+  # ──────────────────────────────────────────────────────────────────────────
+
+# NOTE: The self-test is a separate top-level workflow in this repo:
+#   .github/workflows/developer-self-test.yml
+# It uses `workflow_dispatch` and calls this reusable workflow with a
+# synthetic issue body against riddim-release itself.
+# See developer-self-test.yml for details.
