@@ -11,8 +11,11 @@ reviewers use and how to escalate when the agent has silently changed intent.
 ## When to run this protocol
 
 Run a spot-check on every PR where `agent-rebase.yml` resolved at least one
-conflict marker — identifiable by the presence of the `agent:rebase-resolved`
-label or a `[agent-rebase]` prefix in the force-push commit message.
+conflict marker and successfully pushed a rebased branch:
+
+- PR was previously classified as `dirty`.
+- Rebase completed path is `dirty` in the watcher status comment (state:
+  `rebased-dirty`) written by `update-watcher-status.sh`.
 
 ---
 
@@ -62,13 +65,12 @@ If you find that the agent changed intent (even if tests passed):
    ```bash
    gh pr edit <pr-number> --repo <owner/repo> --add-label "agent:needs-human"
    ```
-3. **Remove the `agent:rebase-resolved` label** if present.
-4. **Post a PR comment** explaining what changed vs. the PR's stated intent and
+3. **Post a PR comment** explaining what changed vs. the PR's stated intent and
    why the agent's resolution was incorrect. Include:
    - The file(s) where intent drifted
    - The line(s) that were incorrectly resolved
    - The correct resolution (if known)
-5. **File a follow-up** in RIDDIM-137 comments with the PR number, the
+4. **File a follow-up** in RIDDIM-137 comments with the PR number, the
    conflict pattern that caused the drift, and a suggested prompt or guard
    improvement for `conflict-resolver-v1.md` or `rebase-guard.sh`.
 

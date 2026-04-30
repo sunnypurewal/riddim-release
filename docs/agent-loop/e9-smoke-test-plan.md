@@ -65,13 +65,13 @@ which exits non-zero when `timeout` is `45`.
 ### Expected outcomes
 
 - [ ] Agent resolves the conflict (but picks wrong value, e.g. `45`).
-- [ ] `test_command` exits non-zero.
+- [ ] `test_command` exits non-zero and the workflow fails verification.
 - [ ] `git rebase --abort` is called; the PR branch is NOT pushed.
 - [ ] PR is labeled `agent:needs-human`.
-- [ ] A diagnostic PR comment is posted containing:
-  - The conflicting file name.
-  - A diff snippet of what the agent attempted.
-  - Truncated test output (≤ 2000 characters).
+- [ ] A diagnostic PR comment is posted with:
+  - The reason string from the workflow (e.g. `Consumer test command failed.`).
+  - The conflicted file list from that workflow run.
+- [ ] The job logs show the failed command and its output.
 - [ ] `mergeable_state` remains `dirty` (no change to the branch).
 
 ---
