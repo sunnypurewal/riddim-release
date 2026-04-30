@@ -121,38 +121,22 @@ fi
 # shellcheck disable=SC2086
 changed_files="$(gh pr diff --name-only "$PR_NUMBER" $REPO_FLAG)"
 # shellcheck disable=SC2086
-diff_stat="$(gh pr diff --stat "$PR_NUMBER" $REPO_FLAG)"
+diff_patch="$(gh pr diff --patch "$PR_NUMBER" $REPO_FLAG)"
 
 changed_file_count() {
   sed '/^[[:space:]]*$/d' | wc -l | tr -d '[:space:]'
 }
 
-changed_line_count_from_stat() {
+changed_line_count_from_patch() {
   awk '
-    /changed/ {
-      total = 0
-      fields = split($0, parts, ",")
-      for (i = 1; i <= fields; i++) {
-        if (parts[i] ~ /insertion|deletion/) {
-          match(parts[i], /[0-9]+/)
-          if (RSTART > 0) {
-            total += substr(parts[i], RSTART, RLENGTH)
-          }
-        }
-      }
-      print total
-      found = 1
-    }
-    END {
-      if (!found) {
-        print 0
-      }
-    }
+    /^\+/ && !/^\+\+\+/ { ins++ }
+    /^-/ && !/^---/     { del++ }
+    END { print ins + del + 0 }
   '
 }
 
 file_count="$(printf '%s\n' "$changed_files" | changed_file_count)"
-line_count="$(printf '%s\n' "$diff_stat" | changed_line_count_from_stat)"
+line_count="$(printf '%s\n' "$diff_patch" | changed_line_count_from_patch)"
 
 if (( file_count > GUARD_MAX_FILES )); then
   block "Diff exceeds file threshold: ${file_count} files changed (cap: ${GUARD_MAX_FILES})"
