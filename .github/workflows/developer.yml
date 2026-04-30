@@ -124,6 +124,15 @@ jobs:
           token: ${{ secrets.dev_bot_pat }}
           fetch-depth: 0
 
+      # -- Attempt counter ---------------------------------------------------
+      - name: Increment attempt label
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
+
       # ── Assemble prompt ───────────────────────────────────────────────────
       - name: Assemble agent prompt
         id: prompt
@@ -137,9 +146,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [[ -n "$PROMPT_OVERRIDE" ]]; then
-            echo "prompt<<PROMPT_EOF" >> "$GITHUB_OUTPUT"
-            echo "$PROMPT_OVERRIDE" >> "$GITHUB_OUTPUT"
-            echo "PROMPT_EOF" >> "$GITHUB_OUTPUT"
+            {
+              echo "prompt<<PROMPT_EOF"
+              echo "$PROMPT_OVERRIDE"
+              echo "PROMPT_EOF"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -166,7 +177,7 @@ jobs:
           6. Open a pull request against main with:
              - Title: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
              - Body: describe what was changed and why, reference "Closes #$ISSUE_NUMBER"
-          7. Add the label 'agent:build' to the PR.
+          7. Add the labels 'agent:build' and 'agent:attempt-1' to the PR.
           8. Enable auto-merge: gh pr merge --auto --squash <PR-NUMBER> --repo $REPO
 
           Important: Stay within the scope of the issue. Do not refactor unrelated code.
@@ -214,10 +225,10 @@ jobs:
       # ── Run Claude Code agent ─────────────────────────────────────────────
       - name: Run developer agent
         uses: anthropics/claude-code-action@v1
+        timeout-minutes: 25
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
           prompt: ${{ steps.prompt.outputs.prompt }}
-          timeout_minutes: "25"
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
       - name: Enable auto-merge on PR (fix-up path)
@@ -227,6 +238,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh pr merge --auto --squash "${{ inputs.pr_number }}" --repo "$REPO" 2>/dev/null || true
+
+      - name: Ensure initial attempt label
+        if: inputs.trigger_type == 'issue_labeled'
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          pr_number="$(gh pr view "agent/issue-${ISSUE_NUMBER}" --repo "$REPO" --json number --jq '.number')"
+          bash .github/scripts/update_attempt_label.sh initial "$pr_number"
 
   # ──────────────────────────────────────────────────────────────────────────
   # Self-test: validates the workflow runs without error on a synthetic input.
