@@ -228,7 +228,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          head_ref_oid="$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)"
+          head_ref_oid="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)"
           echo "head_ref_oid=$head_ref_oid" >> "$GITHUB_OUTPUT"
 
       # ── Checkout ──────────────────────────────────────────────────────────
