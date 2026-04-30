@@ -53,7 +53,7 @@ jobs:
         run: |
           app_id="${{ secrets.DEV_BOT_APP_ID }}"
           bot_login=$(gh api /orgs/RiddimSoftware/installations \
-            --jq --arg id "$app_id" \
+            | jq -r --arg id "$app_id" \
             '.installations[] | select(.app_id == ($id | tonumber)) | .app_slug + "[bot]"')
           echo "developer-bot login: $bot_login"
           [ -n "$bot_login" ] || (echo "ERROR: could not derive dev-bot login" && exit 1)
@@ -73,7 +73,7 @@ jobs:
         run: |
           app_id="${{ secrets.REVIEWER_BOT_APP_ID }}"
           bot_login=$(gh api /orgs/RiddimSoftware/installations \
-            --jq --arg id "$app_id" \
+            | jq -r --arg id "$app_id" \
             '.installations[] | select(.app_id == ($id | tonumber)) | .app_slug + "[bot]"' 2>/dev/null || echo "")
           if [ -z "$bot_login" ]; then
             echo "WARNING: reviewer-bot App (ID: $app_id) is NOT installed on the RiddimSoftware org."
