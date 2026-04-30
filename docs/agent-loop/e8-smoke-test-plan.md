@@ -145,14 +145,16 @@ current head of the PR branch (simulating a stale SHA).
 - A comment is posted on the PR with diagnostic output explaining the
   force-with-lease rejection.
 - The PR branch is **unchanged** — no force-overwrite occurred.
-- The PR is labeled `agent:rebase-failed`.
+- The PR is **not** labeled `agent:rebase-failed` (this path is for conflict
+  detection during rebase; stale-head rejections only post a comment).
 - No data loss occurs on the PR branch.
 
 ### Evidence to capture
 
 - Link to the `auto-rebase` workflow run showing the non-zero exit.
 - Screenshot of the diagnostic comment on the PR.
-- Confirmation of the `agent:rebase-failed` label on the PR.
+- Confirmation that the PR is unchanged and that no `agent:rebase-failed` label
+  was added in this stale-head branch.
 - PR branch head SHA before and after (should be identical).
 
 ---
