@@ -263,7 +263,7 @@ jobs:
             precheck_include_in_app_purchases:false \
             force:true \
             phased_release:true \
-            automatic_release:false \
+            automatic_release:true \
             build_number:"${{ needs.find-build.outputs.build_number }}"
 
       - name: Summary
