@@ -125,6 +125,8 @@ on:
         required: true
       DEV_BOT_PRIVATE_KEY:
         required: true
+      CODEX_AUTH_JSON:
+        required: false
       # dev_bot_pat replaced by GitHub App credentials (DEV_BOT_APP_ID + DEV_BOT_PRIVATE_KEY)
       # Token is minted at runtime via actions/create-github-app-token@v1
 
@@ -136,7 +138,7 @@ concurrency:
 jobs:
   run-developer-agent:
     name: Developer Agent
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
 
     steps:
@@ -596,12 +598,21 @@ jobs:
           fi
 
       # ── Run Claude Code agent ─────────────────────────────────────────────
+      - name: Restore Codex auth
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode && steps.cap-check.outputs.cap_hit != 'true' }}
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          mkdir -p ~/.codex
+          printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
+
       - name: Run developer agent
         if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode && steps.cap-check.outputs.cap_hit != 'true' }}
         uses: anthropics/claude-code-action@v1
         timeout-minutes: 25
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          path_to_claude_code_executable: claude
           prompt: ${{ steps.prompt.outputs.prompt }}
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────

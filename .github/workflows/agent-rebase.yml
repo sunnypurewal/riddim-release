@@ -59,6 +59,8 @@ on:
         required: true
       REVIEWER_BOT_PAT:
         required: true
+      CODEX_AUTH_JSON:
+        required: false
 
   workflow_dispatch:
     inputs:
@@ -94,7 +96,7 @@ env:
 jobs:
   rebase:
     name: Rebase autonomous PR
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     permissions:
       contents: write
@@ -243,6 +245,14 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Restore Codex auth
+        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          mkdir -p ~/.codex
+          printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
+
       - name: Run conflict resolver
         if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
         uses: anthropics/claude-code-action@v1
@@ -250,6 +260,7 @@ jobs:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: claude
           github_token: ${{ secrets.REVIEWER_BOT_PAT }}
           prompt: ${{ steps.conflict_prompt.outputs.prompt }}
 
