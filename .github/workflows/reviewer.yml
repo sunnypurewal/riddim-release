@@ -1,0 +1,73 @@
+# Shared infrastructure - high blast radius.
+#
+# Consumer repositories should call this reusable workflow from a pull_request
+# trigger equivalent to:
+#
+# on:
+#   pull_request:
+#     types: [opened, synchronize, ready_for_review]
+#
+# jobs:
+#   reviewer:
+#     if: >-
+#       github.event.pull_request.user.login == 'developer-bot' &&
+#       github.event.sender.login != 'reviewer-bot' &&
+#       !contains(github.event.pull_request.labels.*.name, 'agent:pause')
+#     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+#     with:
+#       pr_number: ${{ github.event.pull_request.number }}
+#     secrets:
+#       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#       REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+#
+# Constants shared with developer.yml consumers:
+# - Developer bot login: developer-bot
+# - Reviewer bot login: reviewer-bot
+# - Pause label: agent:pause
+# - Human-review label: agent:needs-human
+# - Required status check: reviewer-agent-passed
+
+name: Reviewer Agent
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Caller repository pull request number to review.
+        required: true
+        type: string
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: OAuth token used by claude-code-action in later wiring.
+        required: true
+      REVIEWER_BOT_PAT:
+        description: Reviewer bot token used for PR comments/reviews in later wiring.
+        required: true
+
+env:
+  DEVELOPER_BOT_LOGIN: developer-bot
+  REVIEWER_BOT_LOGIN: reviewer-bot
+  PAUSE_LABEL: agent:pause
+  NEEDS_HUMAN_LABEL: agent:needs-human
+  REVIEWER_STATUS_CHECK: reviewer-agent-passed
+
+concurrency:
+  group: reviewer-agent-pr-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  reviewer-stub:
+    name: Reviewer skeleton stub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print reusable workflow inputs
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          echo "reviewer workflow skeleton"
+          echo "pr_number=${PR_NUMBER}"
+          echo "status_check=${REVIEWER_STATUS_CHECK}"
+          echo "developer_bot=${DEVELOPER_BOT_LOGIN}"
+          echo "reviewer_bot=${REVIEWER_BOT_LOGIN}"
+          echo "pause_label=${PAUSE_LABEL}"
+          echo "needs_human_label=${NEEDS_HUMAN_LABEL}"
