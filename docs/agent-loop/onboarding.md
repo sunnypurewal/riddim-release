@@ -55,14 +55,12 @@ Verify that the following org secrets are accessible to the new repo. A repo adm
 | Secret | Purpose |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates `claude-code-action` |
-| `DEV_BOT_APP_ID` | GitHub App ID for `developer-bot` |
-| `DEV_BOT_PRIVATE_KEY` | Private key for `developer-bot` token minting |
-| `REVIEWER_BOT_APP_ID` | GitHub App ID for `reviewer-bot` |
-| `REVIEWER_BOT_PRIVATE_KEY` | Private key for `reviewer-bot` token minting |
+| `DEV_BOT_PAT` | PAT token used by `developer.yml` workflow |
+| `REVIEWER_BOT_PAT` | PAT token used by `reviewer.yml` workflow |
 
 ```bash
 # Check which secrets the repo can currently access (org-level only):
-gh api repos/<owner>/<repo>/actions/secrets --jq '[.secrets[].name]'
+gh api repos/<owner>/<repo>/actions/organization-secrets --jq '[.secrets[].name]'
 ```
 
 If any are missing, a GitHub org admin must grant repository access at:
@@ -74,7 +72,7 @@ Confirm `developer-bot` and `reviewer-bot` are installed at org scope with acces
 
 ```bash
 # List app installations for the org
-gh api orgs/RiddimSoftware/installations --jq '.[].app_slug'
+gh api orgs/RiddimSoftware/installations --jq '.installations[].app_slug'
 
 # Confirm both apps have repository access
 gh api "app/installations/<installation_id>/repositories" \
