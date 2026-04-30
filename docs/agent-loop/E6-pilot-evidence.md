@@ -36,7 +36,7 @@ All required labels exist on epac: `agent:build`, `agent:attempt-1/2/3`, `agent:
 - **Labels applied:** `agent:attempt-1`
 - **Workflow run:** https://github.com/RiddimSoftware/epac/actions/runs/25150292883
 - **Wall-clock:** ~35 seconds from push to workflow completion
-- **Outcome:** `startup_failure` (expected) — reviewer job condition `github.event.pull_request.user.login == 'developer-bot'` correctly rejected the simulated PR; no unintended automation fired
+- **Outcome:** `startup_failure` (expected in this blocked environment). The simulated PR did not originate from `developer-bot`, and the `github.event.pull_request.user.login == 'developer-bot'` condition correctly excluded it from developer/reviewer automation. Since `issues` are disabled on epac, this run could not complete the full end-to-end path; `startup_failure` remains a separate infrastructure signal that must be validated independently.
 - **Change implemented:** `README.md` created (9 lines) with autonomous loop badge and link to `docs/agent-loop-enrollment.md`
 - **Notes:** Workflow fires on every PR open, evaluates the `developer-bot` condition, and correctly short-circuits. This is correct guard behavior.
 
@@ -52,7 +52,7 @@ All required labels exist on epac: `agent:build`, `agent:attempt-1/2/3`, `agent:
 - **Labels applied:** `agent:attempt-1`
 - **Workflow run:** https://github.com/RiddimSoftware/epac/actions/runs/25150308513
 - **Wall-clock:** ~25 seconds from push to workflow completion
-- **Outcome:** `startup_failure` (expected) — same `developer-bot` guard; no unintended automation fired
+- **Outcome:** `startup_failure` (expected in this blocked environment). The simulated PR did not originate from `developer-bot`, and the same `developer-bot` exclusion guard rejected it. Since epac issues are disabled, we could not run a true end-to-end path from `issue + agent:build` through to developer/reviewer completion; `startup_failure` remains an infra-level result.
 - **Change implemented:** `.github/PULL_REQUEST_TEMPLATE.md` (9 lines) with three checklist items: test coverage, CODEOWNERS-protected paths, `agent:attempt-N` label correctness
 - **Notes:** Template is well within the ≤ 20 line acceptance criterion. Guard behavior identical to Pilot 1.
 
@@ -68,9 +68,9 @@ All required labels exist on epac: `agent:build`, `agent:attempt-1/2/3`, `agent:
 - **Labels applied:** `agent:attempt-3`, `agent:needs-human`
 - **Workflow run:** https://github.com/RiddimSoftware/epac/actions/runs/25150325831
 - **Wall-clock:** ~20 seconds from push to workflow completion
-- **Outcome:** `startup_failure` (expected) — `developer-bot` guard fired; `agent:needs-human` applied manually to simulate cap-hit state; auto-merge blocked
+- **Outcome:** `startup_failure` (expected in this blocked environment). `agent:needs-human` was applied manually to simulate cap-hit state; auto-merge was blocked and no reviewer run proceeded. This validates label-based blocking, not automatic cap-hit escalation logic.
 - **Change implemented:** `docs/agent-loop/networking-async-await-spike.md` — a cap-hit spike note explaining why the issue was rejected and what a human must do to unblock
-- **Notes:** In a live run, the developer workflow would fire from the `agent:build` label on the issue, attempt implementation, hit the ambiguity/scope wall, apply `agent:attempt-3` + `agent:needs-human`, and exit without opening a merge-ready PR. The `agent:needs-human` label correctly blocks the reviewer job (`!contains(..., 'agent:needs-human')` condition). Cap-hit path is wired correctly in the workflow YAML.
+- **Notes:** In a live run, the developer workflow should fire from the `agent:build` label on the issue, attempt implementation, hit the ambiguity/scope wall, apply `agent:attempt-3` + `agent:needs-human`, and exit without opening a merge-ready PR. The reviewer block on `agent:needs-human` worked in this pilot (`!contains(..., 'agent:needs-human')`), but automatic cap-hit escalation was not observed because the label was applied manually.
 
 ---
 
@@ -81,7 +81,7 @@ All required labels exist on epac: `agent:build`, `agent:attempt-1/2/3`, `agent:
 1. **Label vocabulary is complete** — all `agent:*` labels exist on epac with correct descriptions and colors
 2. **Guard conditions work** — reviewer job correctly skips PRs not from `developer-bot`; `agent:needs-human` label correctly blocks all automation
 3. **Workflow fires immediately** — all three PRs triggered `agent-loop.yml` within 20–35 seconds of push; latency is acceptable
-4. **Cap-hit path is wired** — `agent:needs-human` condition in `review-on-pr` job prevents runaway loops on ambiguous issues
+4. **Reviewer block path was validated for manually added `agent:needs-human`** — the `review-on-pr` guard correctly skips review runs when this label is present.
 5. **No runaway loops** — 0 cases of more than 3 runs on the same PR
 
 ### What is blocked
@@ -89,7 +89,7 @@ All required labels exist on epac: `agent:build`, `agent:attempt-1/2/3`, `agent:
 1. **GitHub Issues disabled** — the primary `agent:build` trigger path requires issues; must be re-enabled or trigger rewritten
 2. **PR #292 not merged** — the updated `agent-loop.yml` from RIDDIM-96 is still in review; the current main version may differ
 3. **`developer-bot` not configured** — simulated PRs cannot satisfy the `user.login == 'developer-bot'` condition; a real end-to-end run requires the developer-bot GitHub App to actually open PRs
-4. **Reusable workflow cross-org call failures** — all runs show `startup_failure`; this may indicate the cross-org call to `RiddimSoftware/riddim-release` reusable workflows is failing even for non-bot PRs (separate from the guard condition)
+4. **Startup infra remains unverified** — all runs show `startup_failure`; this may indicate cross-org reusable-workflow invocation issues to `RiddimSoftware/riddim-release` and was not separated from guard behavior in these simulations.
 
 ### Tuning recommendations
 
