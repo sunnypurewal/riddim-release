@@ -71,15 +71,59 @@ for name, outside_lines in snapshot.items():
     if not path.exists():
         print(f"Resolved file was deleted: {name}", file=sys.stderr)
         sys.exit(1)
+
+    pre_resolution_lines = pre_resolution_path.read_text(errors="replace").splitlines()
     current = path.read_text(errors="replace").splitlines()
+
+    outside_segments = [[]]
+    in_conflict = False
+    for line in pre_resolution_lines:
+        if line.startswith("<<<<<<<"):
+            in_conflict = True
+            continue
+        if in_conflict:
+            if line.startswith(">>>>>>>"):
+                in_conflict = False
+                outside_segments.append([])
+            continue
+        if any(line.startswith(prefix) for prefix in ("<<<<<<<", "=======", ">>>>>>>")):
+            continue
+        outside_segments[-1].append(line)
+
+    if in_conflict:
+        print(f"Pre-resolution snapshot has an unterminated conflict block in {name}", file=sys.stderr)
+        sys.exit(1)
+
+    expected_outside = [line for segment in outside_segments for line in segment]
+    if expected_outside != outside_lines:
+        print(f"Outside snapshot does not match pre-resolution context for {name}", file=sys.stderr)
+        sys.exit(1)
+
+    def find_segment(lines, segment, start):
+        if not segment:
+            return start
+        limit = len(lines) - len(segment) + 1
+        for index in range(start, max(start, limit)):
+            if lines[index:index + len(segment)] == segment:
+                return index
+        return -1
+
     pos = 0
-    for expected in outside_lines:
-        try:
-            found = current.index(expected, pos)
-        except ValueError:
-            print(f"Non-conflict context line changed or removed in {name}: {expected!r}", file=sys.stderr)
+    for index, segment in enumerate(outside_segments):
+        if not segment:
+            continue
+        if index == 0:
+            found = 0 if current[:len(segment)] == segment else -1
+        else:
+            found = find_segment(current, segment, pos)
+        if found < 0:
+            print(f"Non-conflict context changed, moved, or had lines inserted in {name}: {segment!r}", file=sys.stderr)
             sys.exit(1)
-        pos = found + 1
+        pos = found + len(segment)
+
+    if outside_segments[-1] and pos != len(current):
+        print(f"Non-conflict context changed or lines were inserted after the final conflict in {name}", file=sys.stderr)
+        sys.exit(1)
 
 print("Conflict resolution validation passed.")
 PY
