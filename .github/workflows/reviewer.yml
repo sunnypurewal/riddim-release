@@ -60,6 +60,18 @@ jobs:
     name: Reviewer skeleton stub
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout local workspace for act
+        if: ${{ env.ACT == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Checkout riddim-release guard scripts
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ github.workflow_sha }}
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
       - name: Print reusable workflow inputs
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -71,3 +83,55 @@ jobs:
           echo "reviewer_bot=${REVIEWER_BOT_LOGIN}"
           echo "pause_label=${PAUSE_LABEL}"
           echo "needs_human_label=${NEEDS_HUMAN_LABEL}"
+
+      - name: Run reviewer guard
+        id: guard
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set +e
+          output="$(bash .github/scripts/guard.sh 2>&1)"
+          status=$?
+          set -e
+
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "output<<EOF"
+            echo "${output}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "${output}"
+          echo "guard_exit_code=${status}"
+
+      - name: Mark PR for human review when guard blocks
+        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          GUARD_OUTPUT: ${{ steps.guard.outputs.output }}
+        run: |
+          comment_body="$(mktemp)"
+          {
+            echo "Reviewer guard blocked autonomous review for PR #${PR_NUMBER}."
+            echo
+            echo "Guard output:"
+            echo '```'
+            echo "${GUARD_OUTPUT}"
+            echo '```'
+          } > "${comment_body}"
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: gh pr edit ${PR_NUMBER} --add-label ${NEEDS_HUMAN_LABEL}"
+            echo "act dry-run: gh pr comment ${PR_NUMBER} --body-file ${comment_body}"
+          else
+            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label "${NEEDS_HUMAN_LABEL}"
+            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file "${comment_body}"
+          fi
+
+          echo "Guard blocked autonomous review; skipping reviewer agent."
+
+      - name: Reviewer agent invocation placeholder
+        if: ${{ steps.guard.outputs.exit_code == '0' }}
+        run: |
+          echo "Guard passed; reviewer agent wiring continues in RIDDIM-114."
