@@ -333,6 +333,8 @@ jobs:
           GH_TOKEN: ${{ steps.reviewer-bot-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
+          set -euo pipefail
+
           {
             echo "metadata<<EOF"
             gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
@@ -340,9 +342,11 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+          raw_diff="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}")"
+          truncated_diff="${raw_diff:0:32000}"
           {
             echo "diff<<EOF"
-            gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" | head -c 32000
+            printf '%s\n' "${truncated_diff}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
