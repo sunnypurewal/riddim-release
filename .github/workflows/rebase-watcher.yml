@@ -1,0 +1,231 @@
+# ============================================================================
+# rebase-watcher.yml — Reusable stale-PR detection and routing workflow
+# RiddimSoftware/riddim-release
+#
+# SHARED INFRASTRUCTURE — HIGH BLAST RADIUS
+# All consumers pinned to @main run this file. Validate changes before merging.
+# See docs/agent-loop/README.md and docs/agent-loop/failure-runbook.md.
+#
+# PURPOSE:
+#   On every push to the consumer repo's base branch (typically `main`) and on
+#   a 15-minute cron backstop, this workflow:
+#     1. Lists all open PRs labelled `autonomous` in the consumer repo.
+#     2. Classifies each by mergeable_state using get-mergeable-state.sh.
+#     3. Dispatches auto-rebase.yml for `behind` PRs (mechanical rebase).
+#     4. Dispatches agent-rebase.yml (E9) for `dirty` PRs (conflict resolution).
+#     5. Logs and skips `clean`, `blocked`, `unstable`, and `unknown` PRs.
+#
+# USAGE IN A CONSUMER REPO (add to agent-loop.yml or a dedicated watcher.yml):
+#
+#   on:
+#     push:
+#       branches: [main]        # fires immediately after every merge to main
+#     schedule:
+#       - cron: '*/15 * * * *'  # backstop: catches push-trigger gaps
+#     workflow_dispatch: {}     # manual re-scan
+#
+#   jobs:
+#     rebase-watcher:
+#       uses: RiddimSoftware/riddim-release/.github/workflows/rebase-watcher.yml@main
+#       secrets:
+#         dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+#       with:
+#         consumer_repo: ${{ github.repository }}
+#
+# SECRETS REQUIRED (org-level, selected-repo access):
+#   DEV_BOT_PAT — developer-bot installation token or fine-grained PAT with
+#                 `contents:write`, `pull_requests:write`, `actions:write`.
+#
+# CONCURRENCY:
+#   A per-PR concurrency group in auto-rebase.yml handles individual PR races.
+#   This watcher runs at most one instance at a time per repo (concurrency group
+#   below) — if main advances mid-scan, the new push trigger will supersede.
+# ============================================================================
+
+name: Rebase Watcher (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      consumer_repo:
+        description: "Owner/repo of the consuming repository (e.g. RiddimSoftware/epac)"
+        required: true
+        type: string
+
+      base_branch:
+        description: "Protected base branch name (default: main)"
+        required: false
+        type: string
+        default: main
+
+      autonomous_label:
+        description: "Label that marks agent-managed PRs (default: autonomous)"
+        required: false
+        type: string
+        default: autonomous
+
+      dry_run:
+        description: "Log routing decisions without dispatching jobs (default: false)"
+        required: false
+        type: boolean
+        default: false
+
+    secrets:
+      dev_bot_pat:
+        required: true
+
+concurrency:
+  group: rebase-watcher-${{ inputs.consumer_repo }}
+  cancel-in-progress: true
+
+jobs:
+  scan-and-route:
+    name: Scan PRs and route stale ones
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout riddim-release scripts
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: main
+          token: ${{ secrets.dev_bot_pat }}
+          path: riddim-release
+
+      - name: List open autonomous PRs
+        id: list-prs
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo }}
+          AUTONOMOUS_LABEL: ${{ inputs.autonomous_label }}
+        run: |
+          set -euo pipefail
+
+          # Paginate to handle repos with >30 open autonomous PRs.
+          page=1
+          all_prs="[]"
+          while true; do
+            batch="$(gh api \
+              "repos/${CONSUMER_REPO}/pulls?state=open&per_page=100&page=${page}" \
+              --jq "[.[] | select(.labels[].name == \"${AUTONOMOUS_LABEL}\") | {number: .number, head_sha: .head.sha, head_ref: .head.ref, base_ref: .base.ref}]")"
+
+            count="$(printf '%s' "$batch" | jq 'length')"
+            all_prs="$(printf '%s\n%s' "$all_prs" "$batch" | jq -s 'add | unique_by(.number)')"
+
+            if (( count < 100 )); then
+              break
+            fi
+            page=$(( page + 1 ))
+          done
+
+          pr_count="$(printf '%s' "$all_prs" | jq 'length')"
+          echo "Found ${pr_count} open autonomous PRs in ${CONSUMER_REPO}."
+          {
+            echo "prs<<EOF"
+            printf '%s' "$all_prs"
+            echo ""
+            echo "EOF"
+            echo "pr_count=$pr_count"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Classify and route each PR
+        if: steps.list-prs.outputs.pr_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PR_LIST: ${{ steps.list-prs.outputs.prs }}
+        run: |
+          set -euo pipefail
+          chmod +x riddim-release/.github/scripts/get-mergeable-state.sh
+
+          routed_behind=0
+          routed_dirty=0
+          skipped=0
+          errors=0
+
+          while IFS= read -r pr_json; do
+            pr_number="$(printf '%s' "$pr_json" | jq -r '.number')"
+            head_sha="$(printf '%s' "$pr_json" | jq -r '.head_sha')"
+            head_ref="$(printf '%s' "$pr_json" | jq -r '.head_ref')"
+            base_ref="$(printf '%s' "$pr_json" | jq -r '.base_ref')"
+
+            echo "--- PR #${pr_number} (${head_ref} → ${base_ref}) ---"
+
+            # Check for pause labels before classifying.
+            labels="$(gh pr view "$pr_number" --repo "$CONSUMER_REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)"
+            if printf '%s\n' "$labels" | grep -qE '^(agent:pause|agent:needs-human|agent:rebase-failed)$'; then
+              matched="$(printf '%s\n' "$labels" | grep -E '^(agent:pause|agent:needs-human|agent:rebase-failed)$' | head -1)"
+              echo "  Skipping PR #${pr_number}: label ${matched} present."
+              skipped=$(( skipped + 1 ))
+              continue
+            fi
+
+            state="$(GH_REPO="$CONSUMER_REPO" \
+              riddim-release/.github/scripts/get-mergeable-state.sh "$pr_number" "$CONSUMER_REPO" 2>&1 | tail -1)"
+
+            echo "  mergeable_state: ${state}"
+
+            case "$state" in
+              behind)
+                if [[ "$DRY_RUN" == "true" ]]; then
+                  echo "  [dry-run] Would dispatch auto-rebase for PR #${pr_number}."
+                else
+                  echo "  Dispatching auto-rebase for PR #${pr_number}..."
+                  gh workflow run auto-rebase.yml \
+                    --repo RiddimSoftware/riddim-release \
+                    --field consumer_repo="$CONSUMER_REPO" \
+                    --field pr_number="$pr_number" \
+                    --field pr_head_sha="$head_sha" \
+                    --field pr_branch="$head_ref" \
+                    --field base_branch="$base_ref"
+                fi
+                routed_behind=$(( routed_behind + 1 ))
+                ;;
+              dirty)
+                if [[ "$DRY_RUN" == "true" ]]; then
+                  echo "  [dry-run] Would dispatch agent-rebase (E9) for PR #${pr_number}."
+                else
+                  echo "  Dispatching agent-rebase (E9) for PR #${pr_number}..."
+                  # E9 workflow (agent-rebase.yml) is implemented in RIDDIM-137.
+                  # Until it ships, label the PR so a human knows it needs attention.
+                  gh pr edit "$pr_number" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" 2>/dev/null || true
+                  gh pr comment "$pr_number" --repo "$CONSUMER_REPO" \
+                    --body "**Rebase Watcher:** PR has merge conflicts (\`dirty\` state). E9 agent-conflict resolution is not yet deployed. Labelling \`agent:needs-human\` until RIDDIM-137 ships." 2>/dev/null || true
+                fi
+                routed_dirty=$(( routed_dirty + 1 ))
+                ;;
+              clean)
+                echo "  clean — no action needed."
+                skipped=$(( skipped + 1 ))
+                ;;
+              blocked|unstable)
+                echo "  ${state} — CI/review territory, not rebase territory. Skipping."
+                skipped=$(( skipped + 1 ))
+                ;;
+              unknown)
+                echo "  ::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
+                errors=$(( errors + 1 ))
+                ;;
+              *)
+                echo "  ::error::Unexpected state '${state}' for PR #${pr_number}."
+                errors=$(( errors + 1 ))
+                ;;
+            esac
+          done < <(printf '%s' "$PR_LIST" | jq -c '.[]')
+
+          echo ""
+          echo "=== Watcher summary ==="
+          echo "  behind → auto-rebase dispatched: ${routed_behind}"
+          echo "  dirty  → agent-rebase dispatched: ${routed_dirty}"
+          echo "  skipped (clean/blocked/unstable/paused): ${skipped}"
+          echo "  unknown/errors: ${errors}"
+
+          if (( errors > 0 )); then
+            echo "::warning::${errors} PR(s) returned unknown/error state. Cron backstop will retry."
+          fi
+
+      - name: No autonomous PRs found
+        if: steps.list-prs.outputs.pr_count == '0'
+        run: echo "No open autonomous PRs found in ${{ inputs.consumer_repo }}. Nothing to do."
