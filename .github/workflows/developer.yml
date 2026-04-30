@@ -148,10 +148,13 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       # ── agent:pause kill-switch — first step, no checkout needed ──────────
+      # Uses GITHUB_TOKEN (not dev-bot token) because the dev-bot App may not
+      # have issues:read permission. GITHUB_TOKEN always has issues:write in
+      # this workflow's permissions block.
       - name: Check automation pause labels
         id: pause-guard
         env:
-          GH_TOKEN: ${{ steps.dev-bot-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           PR_NUMBER: ${{ inputs.pr_number }}
