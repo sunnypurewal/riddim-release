@@ -12,6 +12,11 @@ cat > "$TEST_DIR/bin/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1 $2 $3" == "pr view 123" ]]; then
+  printf '%s\n' "${GUARD_TEST_LABELS:-}"
+  exit 0
+fi
+
 if [[ "$1 $2 $3" != "pr diff --name-only" && "$1 $2 $3" != "pr diff --stat" ]]; then
   echo "unexpected gh invocation: $*" >&2
   exit 64
@@ -74,7 +79,7 @@ assert_success "safe diff exits 0" run_guard
 export GUARD_MAX_FILES=1
 assert_failure_contains \
   "oversize diff exits 1" \
-  "Diff exceeds size threshold: 2 files (cap 1)" \
+  "Diff exceeds file threshold: 2 files changed (cap: 1)" \
   run_guard
 unset GUARD_MAX_FILES
 
@@ -86,19 +91,19 @@ assert_failure_contains \
   run_guard
 
 export GUARD_TEST_NAME_ONLY=$'README.md\nscripts/release/compute_next_version.py'
-export GUARD_MAX_LINES=5
+export MAX_DIFF_LINES=5
 export GUARD_TEST_STAT=$' README.md                               | 4 ++++\n scripts/release/compute_next_version.py | 3 ++-\n 2 files changed, 6 insertions(+), 1 deletion(-)'
 assert_failure_contains \
   "oversize line count exits 1" \
-  "Diff exceeds size threshold: 7 changed lines (cap 5)" \
+  "Diff exceeds line threshold: 7 changed lines (cap: 5)" \
   run_guard
-unset GUARD_MAX_LINES
+unset MAX_DIFF_LINES
 
 export GUARD_TEST_NAME_ONLY=$'README.md\napp/internal/secrets/config.ts'
 export GUARD_TEST_STAT=$' README.md                            | 1 +\n app/internal/secrets/config.ts        | 2 +-\n 2 files changed, 2 insertions(+), 1 deletion(-)'
-export GUARD_SENSITIVE_GLOBS=$'**/*secrets*'
+export GUARD_SENSITIVE_PATHS='**/*secrets*'
 assert_failure_contains \
   "custom GUARD_SENSITIVE_GLOBS exits 1" \
   "Sensitive path matched: app/internal/secrets/config.ts" \
   run_guard
-unset GUARD_SENSITIVE_GLOBS
+unset GUARD_SENSITIVE_PATHS
