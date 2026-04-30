@@ -57,8 +57,12 @@ concurrency:
 
 jobs:
   reviewer-stub:
-    name: Reviewer skeleton stub
+    name: Reviewer agent
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
       - name: Checkout local workspace for act
         if: ${{ env.ACT == 'true' }}
@@ -131,7 +135,60 @@ jobs:
 
           echo "Guard blocked autonomous review; skipping reviewer agent."
 
-      - name: Reviewer agent invocation placeholder
+      - name: Checkout caller PR workspace
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ inputs.pr_number }}/merge
+          path: consumer
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      - name: Load reviewer prompt
         if: ${{ steps.guard.outputs.exit_code == '0' }}
+        id: reviewer_prompt
         run: |
-          echo "Guard passed; reviewer agent wiring continues in RIDDIM-114."
+          {
+            echo "prompt<<EOF"
+            cat .github/prompts/reviewer-verdict.md
+            echo
+            echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
+            echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+
+      - name: Validate reviewer prompt for act
+        if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
+        env:
+          REVIEWER_PROMPT: ${{ steps.reviewer_prompt.outputs.prompt }}
+        run: |
+          for required in \
+            "gh pr review" \
+            "--approve" \
+            "--request-changes" \
+            "git commit" \
+            "git push" \
+            "consumer/CLAUDE.md" \
+            "consumer/AGENTS.md"; do
+            if ! grep -F -- "${required}" <<< "${REVIEWER_PROMPT}" > /dev/null; then
+              echo "Reviewer prompt is missing required text: ${required}" >&2
+              exit 1
+            fi
+          done
+
+          echo "Reviewer prompt loaded and contains required verdict instructions."
+
+      - name: Run reviewer agent
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEWER_STATUS_CHECK: ${{ env.REVIEWER_STATUS_CHECK }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
+          prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
