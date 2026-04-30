@@ -167,3 +167,29 @@ gh run view <run-id> --repo <owner/repo> --log
 # Re-run a failed workflow
 gh run rerun <run-id> --repo <owner/repo>
 ```
+
+---
+
+## 5. Stale PR rebase guard stopped automation
+
+**Symptom:** A PR has `agent:needs-human`, possibly with `agent:rebase-attempt-3` or `agent:codeowners-veto`, and a PR comment beginning with `<!-- riddim:rebase-guard:* -->`.
+
+**Diagnosis:**
+```bash
+gh pr view <pr-number> --repo <owner/repo> --json labels
+gh pr view <pr-number> --repo <owner/repo> --comments
+```
+
+Common guard decisions:
+
+| Decision | Meaning |
+|---|---|
+| `attempt-cap-exceeded` | The PR reached the configured stale-PR rebase cap, default 3 |
+| `size-cap-exceeded` | Conflict surface exceeded `REBASE_MAX_FILES` or `REBASE_MAX_LINES` |
+| `codeowners-veto` | A conflicted file is owned by a human/team in CODEOWNERS |
+
+**Recovery:**
+1. Add `agent:pause` while inspecting if it is not already present.
+2. Rebase locally and resolve conflicts manually.
+3. Push the resolved branch.
+4. Remove `agent:needs-human`, `agent:pause`, and any `agent:rebase-attempt-*` labels only after the branch is safe to return to automation.

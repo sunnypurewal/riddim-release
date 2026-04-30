@@ -14,6 +14,7 @@ The autonomous PR loop handles the full developer → review → merge cycle wit
 1. **Developer bot** (`developer-bot`) — triggered by an `agent:build` label on an issue. Opens a PR implementing the issue body as acceptance criteria.
 2. **Reviewer bot** (`reviewer-bot`) — triggered when the developer bot opens or updates a PR. Reviews the diff against acceptance criteria and either approves + enables auto-merge, or requests changes.
 3. **GitHub auto-merge** — merges the PR once the `reviewer-agent-passed` required status check passes and all branch protection rules are satisfied.
+4. **Rebase guard** (`agent-rebase.yml`) — keeps autonomous PRs current with `main`, fast-forwards cleanly stale PRs, and escalates conflicts that exceed attempt, size, or CODEOWNERS safety caps.
 
 The reusable workflows live in this repo (`RiddimSoftware/riddim-release`) and are called from a thin trigger wrapper in each consumer repo.
 
@@ -122,8 +123,26 @@ Negative smoke test: On a separate test PR, temporarily remove `reviewer-agent-p
 | `agent:attempt-1` | `#ffd8a8` | Attempt counter — first attempt |
 | `agent:attempt-2` | `#ffb56b` | Attempt counter — second attempt |
 | `agent:attempt-3` | `#ff922b` | Attempt counter — third attempt (final default) |
+| `agent:rebase-attempt-1` | `#c5def5` | Rebase counter — first stale-PR rebase attempt |
+| `agent:rebase-attempt-2` | `#8db7e8` | Rebase counter — second stale-PR rebase attempt |
+| `agent:rebase-attempt-3` | `#5319e7` | Rebase counter — third stale-PR rebase attempt |
+| `agent:codeowners-veto` | `#b60205` | Rebase guard blocked conflicts in human-owned CODEOWNERS paths |
 
 The `enroll-repo.sh` script creates all of these with the correct colors.
+
+## Stale PR rebase defaults
+
+`agent-rebase.yml` is the reusable stale-PR recovery path. A consumer-side watcher should call it for open `autonomous` PRs after `main` advances or on a cron backstop.
+
+Default guard thresholds:
+
+| Setting | Default | Purpose |
+|---|---:|---|
+| `REBASE_MAX_ATTEMPTS` | `3` | Stop retry loops after three total rebase attempts |
+| `REBASE_MAX_FILES` | `8` | Escalate large conflict surfaces |
+| `REBASE_MAX_LINES` | `200` | Escalate conflicts with too many marker lines |
+
+Guard comments use fixed markers: `<!-- riddim:rebase-guard:attempts -->`, `<!-- riddim:rebase-guard:size -->`, and `<!-- riddim:rebase-guard:codeowners -->`.
 
 ---
 

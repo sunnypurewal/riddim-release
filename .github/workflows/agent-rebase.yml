@@ -1,0 +1,234 @@
+# Shared infrastructure - high blast radius.
+#
+# Reusable stale-PR / rebase workflow for RIDDIM-91 E8/E9/E10.
+# Consumer repos call this from a base-branch push watcher or scheduled watcher
+# after selecting an open PR labeled `autonomous`.
+#
+# Required caller behavior:
+# - Only call for open PRs that are not labeled `agent:pause` or `agent:needs-human`.
+# - Pass the PR number and consumer build/test commands.
+# - Keep concurrency group `rebase-${{ github.repository }}-${{ inputs.pr_number }}`.
+#
+# Outcomes:
+# - clean/behind: fast-forward rebase and push with --force-with-lease.
+# - dirty: invoke conflict resolver, run consumer verification, push only on green.
+# - guard blocked: apply agent:needs-human and leave a fixed-marker PR comment.
+
+name: Agent Rebase (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      base_branch:
+        required: false
+        type: string
+        default: main
+      build_command:
+        required: false
+        type: string
+        default: ""
+      test_command:
+        required: false
+        type: string
+        default: ""
+      rebase_max_attempts:
+        required: false
+        type: number
+        default: 3
+      rebase_max_files:
+        required: false
+        type: number
+        default: 8
+      rebase_max_lines:
+        required: false
+        type: number
+        default: 200
+      self_test_mode:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      DEV_BOT_PAT:
+        required: true
+      REVIEWER_BOT_PAT:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to rebase"
+        required: true
+        type: number
+      base_branch:
+        description: "Base branch"
+        required: false
+        type: string
+        default: main
+      self_test_mode:
+        description: "Exercise guard wiring without pushing"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: rebase-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  rebase:
+    name: Rebase autonomous PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DEV_BOT_PAT || github.token }}
+          fetch-depth: 0
+
+      - name: Resolve PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          head_ref="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
+          head_repo="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRepositoryOwner --jq .headRepositoryOwner.login)"
+          labels="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+
+          if grep -Fxq "agent:pause" <<< "$labels" || grep -Fxq "agent:needs-human" <<< "$labels"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "PR #$PR_NUMBER is paused or needs human review; skipping."
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+          echo "head_repo=$head_repo" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare branch
+        if: ${{ steps.pr.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "developer-bot"
+          git config user.email "developer-bot@users.noreply.github.com"
+          git fetch origin "$BASE_BRANCH" "$HEAD_REF"
+          git checkout "$HEAD_REF"
+
+      - name: Try mechanical rebase
+        if: ${{ steps.pr.outputs.skip != 'true' }}
+        id: mechanical
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set +e
+          git rebase "origin/${BASE_BRANCH}"
+          status=$?
+          set -e
+          if [[ "$status" == "0" ]]; then
+            echo "state=clean" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=dirty" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run rebase guard
+        if: ${{ steps.pr.outputs.skip != 'true' }}
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || secrets.DEV_BOT_PAT || github.token }}
+          REBASE_INCREMENT_ATTEMPT: "true"
+          REBASE_MAX_ATTEMPTS: ${{ inputs.rebase_max_attempts || 3 }}
+          REBASE_MAX_FILES: ${{ inputs.rebase_max_files || 8 }}
+          REBASE_MAX_LINES: ${{ inputs.rebase_max_lines || 200 }}
+        run: |
+          set -euo pipefail
+          output="$(bash .github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "$GITHUB_REPOSITORY")"
+          decision="$(head -n 1 <<< "$output")"
+          reason_json="$(tail -n 1 <<< "$output")"
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+          {
+            echo "reason_json<<EOF"
+            echo "$reason_json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "$output"
+
+      - name: Stop when guard blocks
+        if: ${{ steps.guard.outputs.decision != 'ok' }}
+        run: |
+          echo "Rebase guard decision: ${{ steps.guard.outputs.decision }}"
+          echo '${{ steps.guard.outputs.reason_json }}'
+
+      - name: Load conflict resolver prompt
+        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        id: conflict_prompt
+        run: |
+          {
+            echo "prompt<<EOF"
+            cat .github/agent-prompts/conflict-resolver-v1.md
+            echo
+            echo "Resolve conflicts for PR #${{ inputs.pr_number }} in ${GITHUB_REPOSITORY}."
+            echo "Base branch: ${{ inputs.base_branch }}"
+            echo "Conflicting files:"
+            git diff --name-only --diff-filter=U
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run conflict resolver
+        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
+          prompt: ${{ steps.conflict_prompt.outputs.prompt }}
+
+      - name: Continue rebase after conflict resolver
+        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        run: |
+          set -euo pipefail
+          if git diff --check; then
+            git add $(git diff --name-only --diff-filter=U)
+            git rebase --continue
+          else
+            git rebase --abort || true
+            gh pr edit "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --add-label "agent:needs-human"
+            gh pr comment "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --body "Conflict resolver produced whitespace or marker errors; rebase aborted and human review is required."
+            exit 1
+          fi
+
+      - name: Run consumer build
+        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.build_command != '' && !inputs.self_test_mode }}
+        run: ${{ inputs.build_command }}
+
+      - name: Run consumer tests
+        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.test_command != '' && !inputs.self_test_mode }}
+        run: ${{ inputs.test_command }}
+
+      - name: Push rebased PR branch
+        if: ${{ steps.guard.outputs.decision == 'ok' && !inputs.self_test_mode }}
+        env:
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          git push --force-with-lease origin "HEAD:${HEAD_REF}"
+
+      - name: Self-test summary
+        if: ${{ inputs.self_test_mode }}
+        run: |
+          echo "Self-test mode completed. Mechanical state: ${{ steps.mechanical.outputs.state }}; guard: ${{ steps.guard.outputs.decision }}."
