@@ -1,234 +1,489 @@
-# Shared infrastructure - high blast radius.
+# ============================================================================
+# agent-rebase.yml — AI-assisted conflict resolution for dirty PRs
+# RiddimSoftware/riddim-release
 #
-# Reusable stale-PR / rebase workflow for RIDDIM-91 E8/E9/E10.
-# Consumer repos call this from a base-branch push watcher or scheduled watcher
-# after selecting an open PR labeled `autonomous`.
+# Dispatched by rebase-watcher.yml when mergeable_state == dirty.
+# Guards (attempt counter, size cap, CODEOWNERS veto) are handled by
+# E10/rebase-guard.sh before dispatch.
 #
-# Required caller behavior:
-# - Only call for open PRs that are not labeled `agent:pause` or `agent:needs-human`.
-# - Pass the PR number and consumer build/test commands.
-# - Keep concurrency group `rebase-${{ github.repository }}-${{ inputs.pr_number }}`.
-#
-# Outcomes:
-# - clean/behind: fast-forward rebase and push with --force-with-lease.
-# - dirty: invoke conflict resolver, run consumer verification, push only on green.
-# - guard blocked: apply agent:needs-human and leave a fixed-marker PR comment.
+# FLOW:
+#   1. Checkout PR branch and attempt rebase onto base branch (expected to fail).
+#   2. Extract conflict context (hunks ±20 lines, PR description, Jira AC).
+#   3. Invoke claude-code-action@v1 as reviewer-bot with conflict-resolver-v1 prompt.
+#   4. Post-resolution diff-check: reject if edits outside conflict markers.
+#   5. Build + test verification with consumer-supplied commands.
+#   6. Force-push on success (as developer-bot) to re-trigger reviewer workflow.
+# ============================================================================
 
 name: Agent Rebase (reusable)
 
 on:
   workflow_call:
     inputs:
+      owner:
+        description: "Owner of the consumer repository (e.g. RiddimSoftware)"
+        required: true
+        type: string
+
+      repo:
+        description: "Name of the consumer repository (e.g. epac)"
+        required: true
+        type: string
+
       pr_number:
+        description: "Pull request number with merge conflicts"
         required: true
         type: number
+
+      pr_branch:
+        description: "Head branch of the PR"
+        required: true
+        type: string
+
       base_branch:
+        description: "Base branch to rebase onto"
         required: false
         type: string
         default: main
-      build_command:
+
+      build_cmd:
+        description: "Command to build the project after conflict resolution (leave empty to skip)"
         required: false
         type: string
         default: ""
-      test_command:
+
+      test_cmd:
+        description: "Command to run tests after conflict resolution (leave empty to skip)"
         required: false
         type: string
         default: ""
-      rebase_max_attempts:
-        required: false
-        type: number
-        default: 3
-      rebase_max_files:
-        required: false
-        type: number
-        default: 8
-      rebase_max_lines:
-        required: false
-        type: number
-        default: 200
-      self_test_mode:
-        required: false
-        type: boolean
-        default: false
+
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
-      DEV_BOT_PAT:
-        required: true
       REVIEWER_BOT_PAT:
         required: true
-
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "PR number to rebase"
+      DEV_BOT_PAT:
         required: true
-        type: number
-      base_branch:
-        description: "Base branch"
-        required: false
-        type: string
-        default: main
-      self_test_mode:
-        description: "Exercise guard wiring without pushing"
-        required: false
-        type: boolean
-        default: true
 
 concurrency:
-  group: rebase-${{ github.repository }}-${{ inputs.pr_number }}
+  group: rebase-${{ inputs.owner }}-${{ inputs.repo }}-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
-  rebase:
-    name: Rebase autonomous PR
+  resolve-conflicts:
+    name: Resolve merge conflicts (PR #${{ inputs.pr_number }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+
+    env:
+      CONSUMER_REPO: ${{ inputs.owner }}/${{ inputs.repo }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      PR_BRANCH: ${{ inputs.pr_branch }}
+      BASE_BRANCH: ${{ inputs.base_branch }}
+
     steps:
-      - name: Checkout PR branch
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout consumer repo as developer-bot and attempt rebase
+      # -----------------------------------------------------------------------
+      - name: Checkout consumer repo (PR branch)
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.DEV_BOT_PAT || github.token }}
+          repository: ${{ inputs.owner }}/${{ inputs.repo }}
+          ref: ${{ inputs.pr_branch }}
+          token: ${{ secrets.DEV_BOT_PAT }}
           fetch-depth: 0
 
-      - name: Resolve PR metadata
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+      - name: Fetch base branch
+        run: |
+          git fetch origin "$BASE_BRANCH"
+
+      - name: Attempt rebase (expected to fail with conflicts)
+        id: attempt-rebase
         run: |
           set -euo pipefail
-          head_ref="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          head_repo="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRepositoryOwner --jq .headRepositoryOwner.login)"
-          labels="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          git config user.email "developer-bot@riddimsoftware.com"
+          git config user.name "developer-bot"
 
-          if grep -Fxq "agent:pause" <<< "$labels" || grep -Fxq "agent:needs-human" <<< "$labels"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "PR #$PR_NUMBER is paused or needs human review; skipping."
+          # Attempt the rebase; capture exit code without aborting the script.
+          if git rebase "origin/$BASE_BRANCH"; then
+            echo "rebase_needed=false" >> "$GITHUB_OUTPUT"
+            echo "No conflicts found — PR is not actually dirty. Exiting cleanly."
+            exit 0
+          else
+            echo "rebase_needed=true" >> "$GITHUB_OUTPUT"
+            echo "Rebase produced conflicts as expected. Proceeding to conflict extraction."
+          fi
+
+      # -----------------------------------------------------------------------
+      # Step 2: Extract conflict context
+      # -----------------------------------------------------------------------
+      - name: Extract conflict context
+        if: steps.attempt-rebase.outputs.rebase_needed == 'true'
+        id: conflict-context
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+        run: |
+          set -euo pipefail
+
+          # List conflicting files
+          CONFLICT_FILES="$(git diff --name-only --diff-filter=U)"
+          echo "Conflicting files:"
+          echo "$CONFLICT_FILES"
+
+          # Build conflict hunks with ±20 lines context per file
+          CONFLICT_HUNKS=""
+          while IFS= read -r file; do
+            CONFLICT_HUNKS+=$'\n'"=== CONFLICT FILE: ${file} ==="$'\n'
+            # Extract each conflict block with surrounding context
+            python3 - "$file" <<'PYEOF'
+          import sys, re
+
+          path = sys.argv[1]
+          with open(path) as f:
+              lines = f.readlines()
+
+          CONTEXT = 20
+          in_conflict = False
+          conflict_ranges = []
+          start = None
+
+          for i, line in enumerate(lines):
+              if line.startswith('<<<<<<<'):
+                  in_conflict = True
+                  start = i
+              elif line.startswith('>>>>>>>') and in_conflict:
+                  in_conflict = False
+                  conflict_ranges.append((start, i))
+
+          for (s, e) in conflict_ranges:
+              ctx_start = max(0, s - CONTEXT)
+              ctx_end = min(len(lines) - 1, e + CONTEXT)
+              print(f"--- conflict block (lines {s+1}–{e+1}) with ±{CONTEXT} context ---")
+              for idx in range(ctx_start, ctx_end + 1):
+                  prefix = ">>> " if s <= idx <= e else "    "
+                  print(f"{idx+1:4d}{prefix}{lines[idx]}", end="")
+              print()
+          PYEOF
+            CONFLICT_HUNKS+=$'\n'
+          done < <(echo "$CONFLICT_FILES")
+
+          # Commits being merged in from base branch
+          BASE_COMMITS="$(git log ORIG_HEAD..HEAD --oneline 2>/dev/null || echo '(ORIG_HEAD not available)')"
+
+          # PR description
+          PR_DESCRIPTION="$(gh pr view "$PR_NUMBER" --repo "$CONSUMER_REPO" --json body --jq '.body' 2>/dev/null || echo '(could not fetch PR description)')"
+
+          # Jira AC (best-effort)
+          JIRA_KEY="$(echo "$PR_DESCRIPTION" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)"
+          JIRA_AC="N/A — no Jira link found"
+          if [[ -n "$JIRA_KEY" ]]; then
+            JIRA_AC="Jira key ${JIRA_KEY} detected; Jira AC fetched externally via claude-code-action context."
+          fi
+
+          # Write context to files for the next step (avoids GITHUB_OUTPUT size limits)
+          echo "$CONFLICT_FILES"    > /tmp/conflict_files.txt
+          echo "$CONFLICT_HUNKS"    > /tmp/conflict_hunks.txt
+          echo "$BASE_COMMITS"      > /tmp/base_commits.txt
+          echo "$PR_DESCRIPTION"    > /tmp/pr_description.txt
+          echo "$JIRA_AC"           > /tmp/jira_ac.txt
+
+          echo "conflict_files_count=$(echo "$CONFLICT_FILES" | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Step 3: Invoke claude-code-action as reviewer-bot
+      # -----------------------------------------------------------------------
+      - name: Checkout riddim-release (for prompt template)
+        if: steps.attempt-rebase.outputs.rebase_needed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: main
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+          path: riddim-release
+
+      - name: Build prompt for claude-code-action
+        if: steps.attempt-rebase.outputs.rebase_needed == 'true'
+        run: |
+          set -euo pipefail
+          PROMPT_TEMPLATE="$(cat riddim-release/.github/agent-prompts/conflict-resolver-v1.md)"
+
+          CONFLICT_FILES="$(cat /tmp/conflict_files.txt)"
+          CONFLICT_HUNKS="$(cat /tmp/conflict_hunks.txt)"
+          BASE_COMMITS="$(cat /tmp/base_commits.txt)"
+          PR_DESCRIPTION="$(cat /tmp/pr_description.txt)"
+          JIRA_AC="$(cat /tmp/jira_ac.txt)"
+
+          cat > /tmp/agent-prompt.md << PROMPT_EOF
+          ${PROMPT_TEMPLATE}
+
+          ---
+
+          ## Context for this session
+
+          **Consumer repo:** ${CONSUMER_REPO}
+          **PR number:** ${PR_NUMBER}
+          **PR branch:** ${PR_BRANCH}
+          **Base branch:** ${BASE_BRANCH}
+
+          ### CONFLICT_FILES
+          \`\`\`
+          ${CONFLICT_FILES}
+          \`\`\`
+
+          ### BASE_COMMITS (commits being merged in from base branch)
+          \`\`\`
+          ${BASE_COMMITS}
+          \`\`\`
+
+          ### PR_DESCRIPTION
+          ${PR_DESCRIPTION}
+
+          ### JIRA_AC
+          ${JIRA_AC}
+
+          ### CONFLICT_HUNKS
+          ${CONFLICT_HUNKS}
+          PROMPT_EOF
+
+          echo "Prompt written to /tmp/agent-prompt.md ($(wc -l < /tmp/agent-prompt.md) lines)"
+
+      - name: Invoke claude-code-action (reviewer-bot)
+        if: steps.attempt-rebase.outputs.rebase_needed == 'true'
+        id: claude-resolve
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt_file: /tmp/agent-prompt.md
+          allowed_tools: "Bash,Edit,Write"
+          timeout_minutes: "20"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      # -----------------------------------------------------------------------
+      # Step 4: Post-resolution diff-check
+      # Verify that claude only edited lines that were inside conflict markers.
+      # -----------------------------------------------------------------------
+      - name: Post-resolution diff-check
+        if: steps.attempt-rebase.outputs.rebase_needed == 'true'
+        id: diff-check
+        run: |
+          set -euo pipefail
+
+          # Check if rebase completed (no remaining conflict markers)
+          REMAINING_CONFLICTS="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
+          if [[ -n "$REMAINING_CONFLICTS" ]]; then
+            echo "::error::Unresolved conflicts remain in: $REMAINING_CONFLICTS"
+            echo "check_passed=false" >> "$GITHUB_OUTPUT"
+            echo "fail_reason=Unresolved conflict markers remain in: ${REMAINING_CONFLICTS}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
-          echo "head_repo=$head_repo" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare branch
-        if: ${{ steps.pr.outputs.skip != 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
-          BASE_BRANCH: ${{ inputs.base_branch }}
-          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
-        run: |
-          set -euo pipefail
-          git config user.name "developer-bot"
-          git config user.email "developer-bot@users.noreply.github.com"
-          git fetch origin "$BASE_BRANCH" "$HEAD_REF"
-          git checkout "$HEAD_REF"
-
-      - name: Try mechanical rebase
-        if: ${{ steps.pr.outputs.skip != 'true' }}
-        id: mechanical
-        env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
-        run: |
-          set +e
-          git rebase "origin/${BASE_BRANCH}"
-          status=$?
-          set -e
-          if [[ "$status" == "0" ]]; then
-            echo "state=clean" >> "$GITHUB_OUTPUT"
-          else
-            echo "state=dirty" >> "$GITHUB_OUTPUT"
+          # Check if rebase is complete (not mid-rebase)
+          if [[ -d "$(git rev-parse --git-dir)/rebase-merge" ]] || \
+             [[ -d "$(git rev-parse --git-dir)/rebase-apply" ]]; then
+            echo "::error::Rebase is still in progress. Claude may not have run git rebase --continue."
+            echo "check_passed=false" >> "$GITHUB_OUTPUT"
+            echo "fail_reason=Rebase did not complete — git rebase --continue was not run" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Run rebase guard
-        if: ${{ steps.pr.outputs.skip != 'true' }}
-        id: guard
-        env:
-          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || secrets.DEV_BOT_PAT || github.token }}
-          REBASE_INCREMENT_ATTEMPT: "true"
-          REBASE_MAX_ATTEMPTS: ${{ inputs.rebase_max_attempts || 3 }}
-          REBASE_MAX_FILES: ${{ inputs.rebase_max_files || 8 }}
-          REBASE_MAX_LINES: ${{ inputs.rebase_max_lines || 200 }}
-        run: |
-          set -euo pipefail
-          output="$(bash .github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "$GITHUB_REPOSITORY")"
-          decision="$(head -n 1 <<< "$output")"
-          reason_json="$(tail -n 1 <<< "$output")"
-          echo "decision=$decision" >> "$GITHUB_OUTPUT"
-          {
-            echo "reason_json<<EOF"
-            echo "$reason_json"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "$output"
+          # Verify no edits leaked outside conflict regions.
+          # Compare what claude changed vs the set of lines that were in conflict regions.
+          # Strategy: diff the pre-rebase state vs post-rebase state on each originally-conflicted file;
+          # any changed line that was NOT between conflict markers in the pre-rebase file is a violation.
+          CONFLICT_FILES="$(cat /tmp/conflict_files.txt)"
+          VIOLATION_FOUND=false
+          VIOLATION_DETAIL=""
 
-      - name: Stop when guard blocks
-        if: ${{ steps.guard.outputs.decision != 'ok' }}
-        run: |
-          echo "Rebase guard decision: ${{ steps.guard.outputs.decision }}"
-          echo '${{ steps.guard.outputs.reason_json }}'
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
 
-      - name: Load conflict resolver prompt
-        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
-        id: conflict_prompt
-        run: |
-          {
-            echo "prompt<<EOF"
-            cat .github/agent-prompts/conflict-resolver-v1.md
-            echo
-            echo "Resolve conflicts for PR #${{ inputs.pr_number }} in ${GITHUB_REPOSITORY}."
-            echo "Base branch: ${{ inputs.base_branch }}"
-            echo "Conflicting files:"
-            git diff --name-only --diff-filter=U
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+            # Get the conflict-marker line numbers from the stashed pre-resolution file.
+            # We stashed it before invoking claude; if not stashed, skip this check gracefully.
+            if [[ ! -f "/tmp/pre_resolution/${file}" ]]; then
+              echo "  Pre-resolution snapshot not available for ${file} — skipping scope check."
+              continue
+            fi
 
-      - name: Run conflict resolver
-        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
-        uses: anthropics/claude-code-action@v1
+            # Find all line numbers that were inside conflict markers
+            python3 - "/tmp/pre_resolution/${file}" > /tmp/conflict_line_nums.txt <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          with open(path) as f:
+              lines = f.readlines()
+          in_conflict = False
+          for i, line in enumerate(lines, 1):
+              if line.startswith('<<<<<<<'):
+                  in_conflict = True
+              if in_conflict:
+                  print(i)
+              if line.startswith('>>>>>>>'):
+                  in_conflict = False
+          PYEOF
+
+            # Get changed line numbers from the rebase commit
+            CHANGED_LINES="$(git diff HEAD~1..HEAD -- "$file" | grep '^+' | grep -v '^+++' | \
+              awk 'NR==1{next} /^@@/{match($0,/@@ -[0-9]+,[0-9]+ \+([0-9]+)/,a); line=a[1]; next} \
+                   {print line; line++}' || true)"
+
+            while IFS= read -r changed_line; do
+              [[ -z "$changed_line" ]] && continue
+              if ! grep -qx "$changed_line" /tmp/conflict_line_nums.txt; then
+                VIOLATION_FOUND=true
+                VIOLATION_DETAIL+="File ${file}: line ${changed_line} was edited but was NOT inside a conflict region.\n"
+              fi
+            done < <(echo "$CHANGED_LINES")
+          done < <(echo "$CONFLICT_FILES")
+
+          if [[ "$VIOLATION_FOUND" == "true" ]]; then
+            echo "::error::Claude edited lines outside conflict markers."
+            echo "check_passed=false" >> "$GITHUB_OUTPUT"
+            printf '%s' "fail_reason=Edits outside conflict regions detected:\n${VIOLATION_DETAIL}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Diff-check passed: all edits were within conflict regions."
+            echo "check_passed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reject — abort rebase and label on diff-check failure
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'false'
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
-          prompt: ${{ steps.conflict_prompt.outputs.prompt }}
-
-      - name: Continue rebase after conflict resolver
-        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+          FAIL_REASON: ${{ steps.diff-check.outputs.fail_reason }}
         run: |
           set -euo pipefail
-          if git diff --check; then
-            git add $(git diff --name-only --diff-filter=U)
-            git rebase --continue
+          git rebase --abort 2>/dev/null || true
+          gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" 2>/dev/null || true
+          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$(cat <<COMMENT_EOF
+          **Agent Rebase (E9):** Conflict resolution rejected — diff-check failed.
+
+          **Reason:** ${FAIL_REASON}
+
+          The conflict resolver edited lines outside the conflict markers, which violates the
+          \`conflict-resolver-v1\` constraints. No changes were pushed. The PR has been labelled
+          \`agent:needs-human\` for manual resolution.
+
+          _Dispatched by \`agent-rebase.yml\` · RIDDIM-137_
+          COMMENT_EOF
+          )" 2>/dev/null || true
+          echo "::error::Aborting — diff-check failed: ${FAIL_REASON}"
+          exit 1
+
+      # -----------------------------------------------------------------------
+      # Step 5: Build + test verification
+      # -----------------------------------------------------------------------
+      - name: Build verification
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'true' &&
+          inputs.build_cmd != ''
+        id: build-check
+        run: |
+          set -euo pipefail
+          echo "Running build command: ${{ inputs.build_cmd }}"
+          if ! ${{ inputs.build_cmd }}; then
+            echo "build_passed=false" >> "$GITHUB_OUTPUT"
           else
-            git rebase --abort || true
-            gh pr edit "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --add-label "agent:needs-human"
-            gh pr comment "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --body "Conflict resolver produced whitespace or marker errors; rebase aborted and human review is required."
-            exit 1
+            echo "build_passed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run consumer build
-        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.build_command != '' && !inputs.self_test_mode }}
-        run: ${{ inputs.build_command }}
-
-      - name: Run consumer tests
-        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.test_command != '' && !inputs.self_test_mode }}
-        run: ${{ inputs.test_command }}
-
-      - name: Push rebased PR branch
-        if: ${{ steps.guard.outputs.decision == 'ok' && !inputs.self_test_mode }}
-        env:
-          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+      - name: Test verification
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'true' &&
+          inputs.test_cmd != ''
+        id: test-check
         run: |
           set -euo pipefail
-          git push --force-with-lease origin "HEAD:${HEAD_REF}"
+          echo "Running test command: ${{ inputs.test_cmd }}"
+          if ! ${{ inputs.test_cmd }}; then
+            echo "test_passed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "test_passed=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Self-test summary
-        if: ${{ inputs.self_test_mode }}
+      - name: Reject — abort and label on build/test failure
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'true' &&
+          (steps.build-check.outputs.build_passed == 'false' ||
+           steps.test-check.outputs.test_passed == 'false')
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
         run: |
-          echo "Self-test mode completed. Mechanical state: ${{ steps.mechanical.outputs.state }}; guard: ${{ steps.guard.outputs.decision }}."
+          set -euo pipefail
+          FAIL_STAGE="build"
+          [[ "${{ steps.build-check.outputs.build_passed }}" != "false" ]] && FAIL_STAGE="test"
+
+          DIFF_SNIPPET="$(git diff HEAD~1..HEAD | head -80 || true)"
+
+          git rebase --abort 2>/dev/null || true
+          gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" 2>/dev/null || true
+          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$(cat <<COMMENT_EOF
+          **Agent Rebase (E9):** Conflict resolution rejected — ${FAIL_STAGE} failed after resolution.
+
+          The conflicts were resolved within scope, but the post-resolution ${FAIL_STAGE} did not pass.
+          No changes were pushed. The PR has been labelled \`agent:needs-human\`.
+
+          <details>
+          <summary>Resolution diff (first 80 lines)</summary>
+
+          \`\`\`diff
+          ${DIFF_SNIPPET}
+          \`\`\`
+          </details>
+
+          _Dispatched by \`agent-rebase.yml\` · RIDDIM-137_
+          COMMENT_EOF
+          )" 2>/dev/null || true
+          echo "::error::Aborting — ${FAIL_STAGE} failed after conflict resolution."
+          exit 1
+
+      # -----------------------------------------------------------------------
+      # Step 6: Force-push on success (as developer-bot)
+      # -----------------------------------------------------------------------
+      - name: Push resolved branch
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'true' &&
+          steps.build-check.outputs.build_passed != 'false' &&
+          steps.test-check.outputs.test_passed != 'false'
+        env:
+          DEV_BOT_PAT: ${{ secrets.DEV_BOT_PAT }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${DEV_BOT_PAT}@github.com/${CONSUMER_REPO}.git"
+          git push --force-with-lease="${PR_BRANCH}" origin "${PR_BRANCH}"
+          echo "Successfully pushed resolved branch. Synchronize event will re-trigger the reviewer workflow."
+
+      - name: Post success comment
+        if: >
+          steps.attempt-rebase.outputs.rebase_needed == 'true' &&
+          steps.diff-check.outputs.check_passed == 'true' &&
+          steps.build-check.outputs.build_passed != 'false' &&
+          steps.test-check.outputs.test_passed != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+        run: |
+          set -euo pipefail
+          DIFF_SNIPPET="$(git diff HEAD~1..HEAD | head -60 || true)"
+          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$(cat <<COMMENT_EOF
+          **Agent Rebase (E9):** Conflicts resolved and branch updated.
+
+          The PR branch has been rebased onto \`${BASE_BRANCH}\`. All diff-check and
+          build/test gates passed. The reviewer workflow will be re-triggered automatically
+          by the push synchronize event.
+
+          <details>
+          <summary>Resolution diff (first 60 lines)</summary>
+
+          \`\`\`diff
+          ${DIFF_SNIPPET}
+          \`\`\`
+          </details>
+
+          _Dispatched by \`agent-rebase.yml\` · RIDDIM-137_
+          COMMENT_EOF
+          )" 2>/dev/null || true
