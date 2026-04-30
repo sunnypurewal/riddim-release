@@ -47,39 +47,63 @@ jobs:
 
       - name: Print developer-bot login
         id: print-login
+        # GitHub App installation tokens cannot call /user (returns 403 by design).
+        # Derive the bot login from the app slug via the org installations list.
+        # Bot login format: "{app-slug}[bot]"
         run: |
-          login=$(gh api /user --jq '.login')
-          echo "developer-bot login: $login"
-          echo "login=$login" >> "$GITHUB_OUTPUT"
+          app_id="${{ secrets.DEV_BOT_APP_ID }}"
+          bot_login=$(gh api /orgs/RiddimSoftware/installations \
+            --jq --arg id "$app_id" \
+            '.installations[] | select(.app_id == ($id | tonumber)) | .app_slug + "[bot]"')
+          echo "developer-bot login: $bot_login"
+          [ -n "$bot_login" ] || (echo "ERROR: could not derive dev-bot login" && exit 1)
+          echo "login=$bot_login" >> "$GITHUB_OUTPUT"
         env:
-          GH_TOKEN: ${{ steps.dev-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
 
   check-reviewer-bot-identity:
-    name: Mint reviewer-bot token and confirm login
+    name: Reviewer-bot installation check
     runs-on: ubuntu-latest
     outputs:
-      login: ${{ steps.print-login.outputs.login }}
+      login: ${{ steps.check-install.outputs.login }}
+      installed: ${{ steps.check-install.outputs.installed }}
     steps:
-      - uses: actions/create-github-app-token@v1
+      - name: Check reviewer-bot App installation status
+        id: check-install
+        run: |
+          app_id="${{ secrets.REVIEWER_BOT_APP_ID }}"
+          bot_login=$(gh api /orgs/RiddimSoftware/installations \
+            --jq --arg id "$app_id" \
+            '.installations[] | select(.app_id == ($id | tonumber)) | .app_slug + "[bot]"' 2>/dev/null || echo "")
+          if [ -z "$bot_login" ]; then
+            echo "WARNING: reviewer-bot App (ID: $app_id) is NOT installed on the RiddimSoftware org."
+            echo "The App was created 2026-04-30 but requires a human org admin to install it via:"
+            echo "  https://github.com/apps/riddim-reviewer-bot/installations/new"
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+            echo "login=NOT_INSTALLED" >> "$GITHUB_OUTPUT"
+            exit 1
+          else
+            echo "reviewer-bot login: $bot_login"
+            echo "installed=true" >> "$GITHUB_OUTPUT"
+            echo "login=$bot_login" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Mint reviewer-bot token to confirm
         id: reviewer-token
+        if: steps.check-install.outputs.installed == 'true'
+        uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.REVIEWER_BOT_APP_ID }}
           private-key: ${{ secrets.REVIEWER_BOT_PRIVATE_KEY }}
           owner: RiddimSoftware
 
-      - name: Print reviewer-bot login
-        id: print-login
-        run: |
-          login=$(gh api /user --jq '.login')
-          echo "reviewer-bot login: $login"
-          echo "login=$login" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ steps.reviewer-token.outputs.token }}
-
   verify-distinct-identities:
     name: Verify bot identities are distinct
     runs-on: ubuntu-latest
     needs: [check-dev-bot-identity, check-reviewer-bot-identity]
+    if: needs.check-reviewer-bot-identity.outputs.installed == 'true'
     steps:
       - name: Compare logins
         run: |
