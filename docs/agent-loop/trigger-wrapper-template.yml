@@ -1,0 +1,82 @@
+# Autonomous PR Loop — trigger wrapper for consumer repositories
+#
+# Copy this file to <your-repo>/.github/workflows/agent-loop.yml
+# No edits required. Inherits all secrets from the org.
+#
+# Prerequisites:
+# - Org secrets CLAUDE_CODE_OAUTH_TOKEN, DEV_BOT_PAT, and REVIEWER_BOT_PAT must be set
+#   and granted to this repo.
+# - Branch protection on main must require the `reviewer-agent-passed` check.
+# - All agent:* labels must exist (run scripts/enroll-repo.sh to create them).
+#
+# Triggers:
+# - Developer: issue labeled agent:build (opens a PR from the issue body)
+# - Reviewer:  PR opened or synchronized by developer-bot (reviews and approves/rejects)
+# - Developer fixup: PR review requests changes from reviewer-bot
+
+name: Autonomous PR Loop
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  # -----------------------------------------------------------------
+  # Developer: initial build
+  # Fires when an issue receives the agent:build label.
+  # Guards: agent:pause or agent:needs-human on the issue suppress the run.
+  # -----------------------------------------------------------------
+  developer:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'agent:build' &&
+      !contains(github.event.issue.labels.*.name, 'agent:pause') &&
+      !contains(github.event.issue.labels.*.name, 'agent:needs-human')
+    uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
+    with:
+      trigger_type: issue-build
+      issue_number: ${{ github.event.issue.number }}
+      issue_body: ${{ github.event.issue.body }}
+    secrets: inherit
+
+  # -----------------------------------------------------------------
+  # Developer: fix-up after review
+  # Fires when reviewer-bot requests changes on a PR.
+  # Guards: agent:pause or agent:needs-human on the PR suppress the run.
+  # -----------------------------------------------------------------
+  developer-fixup:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'changes_requested' &&
+      github.event.review.user.login == 'reviewer-bot' &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
+    uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
+    with:
+      trigger_type: pr-fixup
+      pr_number: ${{ github.event.pull_request.number }}
+      review_comments: ${{ github.event.review.body }}
+    secrets: inherit
+
+  # -----------------------------------------------------------------
+  # Reviewer: review a PR opened or updated by developer-bot
+  # Fires on PR open/sync events from the developer bot.
+  # Guards: agent:pause or agent:needs-human on the PR suppress the run.
+  # -----------------------------------------------------------------
+  reviewer:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'ready_for_review') &&
+      github.event.pull_request.user.login == 'developer-bot' &&
+      github.event.sender.login != 'reviewer-bot' &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
+    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit

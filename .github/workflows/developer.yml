@@ -74,8 +74,20 @@ on:
         type: number
         default: 0
 
+      review_comments:
+        description: "Synthetic or caller-provided review comments for fix-up self-tests"
+        required: false
+        type: string
+        default: ""
+
       prompt_override:
         description: "Optional: fully override the agent prompt (advanced use only)"
+        required: false
+        type: string
+        default: ""
+
+      mock_labels:
+        description: "Self-test only: comma/newline-separated labels that bypass gh label lookup."
         required: false
         type: string
         default: ""
@@ -85,6 +97,18 @@ on:
         required: false
         type: number
         default: 500
+
+      self_test_mode:
+        description: "riddim-release self-test only: create deterministic artifacts without invoking Claude"
+        required: false
+        type: boolean
+        default: false
+
+      self_test_branch:
+        description: "riddim-release self-test only: branch to create or update"
+        required: false
+        type: string
+        default: ""
 
     secrets:
       claude_code_oauth_token:
@@ -104,9 +128,88 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.dev_bot_pat }}
+          fetch-depth: 0
+
+      - name: Check automation pause labels
+        id: pause-guard
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MOCK_LABELS: ${{ inputs.mock_labels }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$TRIGGER_TYPE" in
+            issue_labeled)
+              target_type="issue"
+              target_number="$ISSUE_NUMBER"
+              ;;
+            changes_requested)
+              target_type="pr"
+              target_number="$PR_NUMBER"
+              ;;
+            *)
+              {
+                echo "skip=false"
+                echo "target_type=unknown"
+                echo "target_number=$PR_NUMBER"
+                echo "pause_label="
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [[ -z "$target_number" || "$target_number" == "0" ]]; then
+            echo "::error::${target_type}_number is required for ${TRIGGER_TYPE}."
+            exit 1
+          fi
+
+          if [[ -n "$MOCK_LABELS" ]]; then
+            labels="$(printf '%s' "$MOCK_LABELS" | tr ',' '\n')"
+          elif [[ "$target_type" == "issue" ]]; then
+            labels="$(gh issue view "$target_number" --json labels --jq '.labels[].name')"
+          else
+            labels="$(gh pr view "$target_number" --json labels --jq '.labels[].name')"
+          fi
+
+          pause_label=""
+          while IFS= read -r label; do
+            case "$label" in
+              agent:pause|agent:needs-human)
+                pause_label="$label"
+                break
+                ;;
+            esac
+          done <<< "$labels"
+
+          {
+            echo "target_type=$target_type"
+            echo "target_number=$target_number"
+            echo "skip=false"
+            echo "pause_label=$pause_label"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ -n "$pause_label" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping developer workflow: $pause_label present on ${target_type} #${target_number}."
+            echo "::notice::Developer automation skipped due to ${pause_label} on ${target_type} #${target_number}."
+          fi
+
+          if [[ -z "$pause_label" ]]; then
+            echo "No pause labels present on ${target_type} #${target_number}; continuing."
+          fi
+
       # ── Safety guard ──────────────────────────────────────────────────────
       - name: Run safety guard
-        if: inputs.trigger_type == 'changes_requested'
+        if: ${{ inputs.trigger_type == 'changes_requested' && steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
@@ -118,7 +221,7 @@ jobs:
           /tmp/guard.sh "${{ inputs.pr_number }}"
 
       - name: Capture PR head before fix-up
-        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true'
         id: pr_head_before
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
@@ -137,16 +240,144 @@ jobs:
 
       # -- Attempt counter ---------------------------------------------------
       - name: Increment attempt label
-        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           REPO: ${{ github.repository }}
         run: |
           bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
 
+      # ── Deterministic self-test path ──────────────────────────────────────
+      - name: Exercise workflow in self-test mode
+        id: self-test
+        if: ${{ inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SELF_TEST_BRANCH: ${{ inputs.self_test_branch }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          branch="${SELF_TEST_BRANCH:-selftest/${RUN_ID}}"
+          mkdir -p smoke-test
+
+          if [[ "${ACT:-false}" == "true" ]]; then
+            if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+              cat > smoke-test/developer-self-test.md <<EOF
+          # Developer Agent Self Test
+          Trigger: issue_labeled
+          Issue: ${ISSUE_NUMBER}
+          Run: ${RUN_ID}
+
+          ${ISSUE_BODY}
+          EOF
+              echo "artifact_kind=local-pr" >> "$GITHUB_OUTPUT"
+            elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+              cat > smoke-test/developer-self-test-fixup.md <<EOF
+          # Developer Agent Self Test Fix-up
+          Trigger: changes_requested
+          PR: ${PR_NUMBER}
+          Run: ${RUN_ID}
+          EOF
+              echo "artifact_kind=local-commit" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::trigger_type must be issue_labeled or changes_requested."
+              exit 1
+            fi
+            echo "artifact_ref=$branch" >> "$GITHUB_OUTPUT"
+            echo "ACT=true; created local self-test artifact and skipped git/gh network actions."
+            exit 0
+          fi
+
+          git config user.name "riddim-dev-self-test"
+          git config user.email "riddim-dev-self-test@users.noreply.github.com"
+          git checkout -B "$branch"
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            cat > smoke-test/developer-self-test.md <<EOF
+          # Developer Agent Self Test
+          Trigger: issue_labeled
+          Issue: ${ISSUE_NUMBER}
+          Run: ${RUN_ID}
+
+          ${ISSUE_BODY}
+          EOF
+
+            git add smoke-test/developer-self-test.md
+            git commit -m "test: developer self-test issue path ${RUN_ID}"
+
+            git push --force-with-lease origin "$branch"
+
+            pr_url="$(gh pr create \
+              --repo "$REPO" \
+              --base main \
+              --head "$branch" \
+              --title "chore: developer self-test run ${RUN_ID}" \
+              --body "Synthetic developer workflow self-test for run ${RUN_ID}." \
+              --draft)"
+            echo "artifact_kind=pr" >> "$GITHUB_OUTPUT"
+            echo "artifact_ref=$pr_url" >> "$GITHUB_OUTPUT"
+            echo "Created self-test PR: $pr_url"
+          elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+            cat > smoke-test/developer-self-test-fixup.md <<EOF
+          # Developer Agent Self Test Fix-up
+          Trigger: changes_requested
+          PR: ${PR_NUMBER}
+          Run: ${RUN_ID}
+          EOF
+
+            git add smoke-test/developer-self-test-fixup.md
+            git commit -m "test: developer self-test fixup path ${RUN_ID}"
+
+            git push --force-with-lease origin "$branch"
+
+            echo "artifact_kind=commit" >> "$GITHUB_OUTPUT"
+            echo "artifact_ref=$branch" >> "$GITHUB_OUTPUT"
+            echo "Created self-test fix-up commit on $branch"
+          else
+            echo "::error::trigger_type must be issue_labeled or changes_requested."
+            exit 1
+          fi
+
+      - name: Stop after self-test mode
+        if: ${{ inputs.self_test_mode }}
+        run: |
+          echo "Self-test mode completed; skipping Claude invocation."
+
+      - name: Assert self-test artifact in reusable workflow
+        if: ${{ inputs.self_test_mode }}
+        env:
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            test -s smoke-test/developer-self-test.md
+          elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+            test -s smoke-test/developer-self-test-fixup.md
+          else
+            echo "::error::trigger_type must be issue_labeled or changes_requested."
+            exit 1
+          fi
+
+      - name: Upload self-test artifact
+        if: ${{ inputs.self_test_mode && env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: developer-self-test-${{ github.run_id }}
+          path: smoke-test/
+          if-no-files-found: error
+
       # ── Assemble prompt ───────────────────────────────────────────────────
       - name: Assemble agent prompt
         id: prompt
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
         env:
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -235,6 +466,7 @@ jobs:
 
       # ── Run Claude Code agent ─────────────────────────────────────────────
       - name: Run developer agent
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
         uses: anthropics/claude-code-action@v1
         timeout-minutes: 25
         with:
@@ -243,7 +475,7 @@ jobs:
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
       - name: Enable auto-merge on PR
-        if: env.ACT != 'true'
+        if: ${{ !inputs.self_test_mode && env.ACT != 'true' && steps.pause-guard.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
@@ -255,12 +487,12 @@ jobs:
           bash .github/scripts/enable-auto-merge.sh
 
       - name: Skip auto-merge during local act smoke tests
-        if: env.ACT == 'true'
+        if: ${{ !inputs.self_test_mode && env.ACT == 'true' && steps.pause-guard.outputs.skip != 'true' }}
         run: |
           echo "Skipping gh pr merge --auto --squash because ACT=true local smoke test."
 
       - name: Ensure initial attempt label
-        if: inputs.trigger_type == 'issue_labeled'
+        if: ${{ !inputs.self_test_mode && inputs.trigger_type == 'issue_labeled' && steps.pause-guard.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           REPO: ${{ github.repository }}
