@@ -1,6 +1,6 @@
 # Autonomous PR Loop — Onboarding Guide
 
-> **Last verified against `riddim-release@026e10a` on 2026-04-30.**
+> Last verified against riddim-release@main on 2026-04-30.
 > Update this header whenever a material workflow change lands in riddim-release.
 
 **Goal:** enroll a new consumer repo in the autonomous PR loop in < 30 minutes.
@@ -306,6 +306,7 @@ If you prefer to create them manually, here is the full label set:
 | `agent:rebase-attempt-2` | `#8db7e8` | Rebase counter — second stale-PR rebase |
 | `agent:rebase-attempt-3` | `#5319e7` | Rebase counter — third stale-PR rebase |
 | `agent:codeowners-veto` | `#b60205` | Rebase guard blocked; conflicting files are human-owned |
+| `automate` | `#0075ca` | Enrolls the PR in the autonomous code review pipeline |
 
 ---
 
@@ -420,6 +421,7 @@ For full details on the attempt counter, CODEOWNERS veto, and comment markers, s
 - [`failure-runbook.md`](failure-runbook.md) — diagnosis and recovery
 - [`trigger-wrapper-template.yml`](trigger-wrapper-template.yml) — canonical wrapper template
 - [`e10-rebase-guards.md`](e10-rebase-guards.md) — rebase guard thresholds, attempt counter, CODEOWNERS veto
-- [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation
+- [`scripts/enroll-consumer.sh`](../../scripts/enroll-consumer.sh) — per-repo enrollment automation (supports `--dry-run`)
+- [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation (legacy; prefer `enroll-consumer.sh`)
 - [RIDDIM-91](https://riddim.atlassian.net/browse/RIDDIM-91) — parent initiative
 - [RIDDIM-99](https://riddim.atlassian.net/browse/RIDDIM-99) — this epic
