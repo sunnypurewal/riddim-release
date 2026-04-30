@@ -21,6 +21,10 @@ if [[ $# -ne 1 ]]; then
 fi
 
 PR_NUMBER="$1"
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "Error: pull-request-number must be a positive integer, got: $PR_NUMBER" >&2
+  exit 2
+fi
 GUARD_MAX_FILES="${GUARD_MAX_FILES:-30}"
 GUARD_MAX_LINES="${GUARD_MAX_LINES:-1000}"
 

@@ -4,11 +4,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUARD="$REPO_ROOT/.github/scripts/guard.sh"
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
+TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$TEST_DIR"' EXIT
 
-mkdir -p "$TMPDIR/bin"
-cat > "$TMPDIR/bin/gh" <<'GH'
+mkdir -p "$TEST_DIR/bin"
+cat > "$TEST_DIR/bin/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -22,12 +22,12 @@ case "$3" in
   --stat) printf '%s\n' "$GUARD_TEST_STAT" ;;
 esac
 GH
-chmod +x "$TMPDIR/bin/gh"
+chmod +x "$TEST_DIR/bin/gh"
 
-export PATH="$TMPDIR/bin:$PATH"
+export PATH="$TEST_DIR/bin:$PATH"
 
 run_guard() {
-  "$GUARD" 123 >"$TMPDIR/stdout" 2>"$TMPDIR/stderr"
+  "$GUARD" 123 >"$TEST_DIR/stdout" 2>"$TEST_DIR/stderr"
 }
 
 assert_success() {
@@ -35,8 +35,8 @@ assert_success() {
   shift
   if ! "$@"; then
     echo "not ok - $name" >&2
-    cat "$TMPDIR/stdout" >&2 || true
-    cat "$TMPDIR/stderr" >&2 || true
+    cat "$TEST_DIR/stdout" >&2 || true
+    cat "$TEST_DIR/stderr" >&2 || true
     exit 1
   fi
   echo "ok - $name"
@@ -57,10 +57,10 @@ assert_failure_contains() {
     exit 1
   fi
 
-  if ! grep -Fq "$expected" "$TMPDIR/stdout"; then
+  if ! grep -Fq "$expected" "$TEST_DIR/stdout"; then
     echo "not ok - $name: expected '$expected'" >&2
-    cat "$TMPDIR/stdout" >&2 || true
-    cat "$TMPDIR/stderr" >&2 || true
+    cat "$TEST_DIR/stdout" >&2 || true
+    cat "$TEST_DIR/stderr" >&2 || true
     exit 1
   fi
 
@@ -84,3 +84,21 @@ assert_failure_contains \
   "sensitive path exits 1" \
   "Sensitive path matched: fastlane/Fastfile" \
   run_guard
+
+export GUARD_TEST_NAME_ONLY=$'README.md\nscripts/release/compute_next_version.py'
+export GUARD_MAX_LINES=5
+export GUARD_TEST_STAT=$' README.md                             | 3 ++-\n scripts/release/compute_next_version.py | 4 ++--\n 2 files changed, 6 insertions(+), 1 deletion(-)'
+assert_failure_contains \
+  "oversize line count exits 1" \
+  "Diff exceeds size threshold: 7 changed lines (cap 5)" \
+  run_guard
+unset GUARD_MAX_LINES
+
+export GUARD_TEST_NAME_ONLY=$'README.md\napp/internal/secrets/config.ts'
+export GUARD_TEST_STAT=$' README.md                            | 1 +\n app/internal/secrets/config.ts        | 2 +-\n 2 files changed, 2 insertions(+), 1 deletion(-)'
+export GUARD_SENSITIVE_GLOBS=$'**/*secrets*'
+assert_failure_contains \
+  "custom GUARD_SENSITIVE_GLOBS exits 1" \
+  "Sensitive path matched: app/internal/secrets/config.ts" \
+  run_guard
+unset GUARD_SENSITIVE_GLOBS
