@@ -88,6 +88,7 @@ on:
 permissions:
   contents: write   # create draft GitHub Release
   id-token: write   # required for OIDC AWS authentication
+  pull-requests: read   # generate_release_notes.py reads PR bodies via gh pr view
 
 concurrency:
   group: app-store-deploy
