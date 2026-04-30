@@ -66,6 +66,19 @@ gh api repos/<owner>/<repo>/actions/organization-secrets --jq '[.secrets[].name]
 If any are missing, a GitHub org admin must grant repository access at:
 `https://github.com/organizations/RiddimSoftware/settings/secrets/actions`
 
+To avoid replacing existing repository grants, add each repo with the per-repo endpoint:
+
+```bash
+CONSUMER="RiddimSoftware/your-repo"
+CONSUMER_ID="$(gh api /repos/${CONSUMER} --jq .id)"
+
+for SECRET in CLAUDE_CODE_OAUTH_TOKEN DEV_BOT_PAT REVIEWER_BOT_PAT; do
+  gh api \
+    --method PUT \
+    "/orgs/RiddimSoftware/actions/secrets/${SECRET}/repositories/${CONSUMER_ID}"
+done
+```
+
 ### 2b — GitHub App installation
 
 Confirm `developer-bot` and `reviewer-bot` are installed at org scope with access to the new repo:
@@ -173,6 +186,52 @@ bash scripts/enroll-repo.sh <owner/repo>
 
 # Example:
 bash scripts/enroll-repo.sh RiddimSoftware/epac
+```
+
+If you need to apply just the status-check requirement from CLI while preserving all other branch-protection settings:
+
+```bash
+CONSUMER="RiddimSoftware/your-repo"
+export CONSUMER
+
+CURRENT_CHECKS="$(mktemp)"
+export CURRENT_CHECKS
+if ! gh api /repos/${CONSUMER}/branches/main/protection/required_status_checks > "${CURRENT_CHECKS}"; then
+  cat > "${CURRENT_CHECKS}" <<'EOF'
+{"strict": true, "contexts": []}
+EOF
+fi
+
+python3 - <<'PY'
+import json
+import subprocess
+import os
+
+consumer = os.environ["CONSUMER"]
+with open(os.environ["CURRENT_CHECKS"], "r", encoding="utf-8") as f:
+    checks = json.load(f)
+
+contexts = checks.get("contexts", [])
+if "reviewer-agent-passed" not in contexts:
+    contexts.append("reviewer-agent-passed")
+
+payload = {
+    "strict": checks.get("strict", True),
+    "contexts": contexts,
+}
+
+subprocess.run(
+    [
+        "gh", "api", "--method", "PATCH",
+        f"/repos/{consumer}/branches/main/protection/required_status_checks",
+        "--input", "-",
+    ],
+    input=json.dumps(payload).encode("utf-8"),
+    check=True,
+)
+PY
+
+rm -f "${CURRENT_CHECKS}"
 ```
 
 The script cannot set all branch protection options via the API. Open the URL it prints and apply these settings manually on the `main` branch:
