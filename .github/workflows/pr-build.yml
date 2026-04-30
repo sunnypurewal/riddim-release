@@ -61,6 +61,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Use SSH for all GitHub clones
+        run: git config --global url."git@github.com:".insteadOf "https://github.com/"
+
       - name: Select Xcode version
         if: ${{ inputs.xcode_version != '' }}
         run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer
