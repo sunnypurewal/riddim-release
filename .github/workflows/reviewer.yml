@@ -99,11 +99,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: RiddimSoftware/riddim-release
-          # When called from a riddim-release self-test (local ref), pin to the
-          # triggering commit so guard scripts match the workflow body under test.
-          # When called cross-repo (e.g. from bap), the caller's github.sha is not
-          # a valid riddim-release ref — fall back to default-branch HEAD instead.
-          ref: ${{ github.repository == 'RiddimSoftware/riddim-release' && github.sha || '' }}
+          ref: main
           token: ${{ steps.reviewer-bot-token.outputs.token }}
 
       # ── agent:pause kill-switch — must be first step after checkout ─────────
