@@ -81,6 +81,10 @@ conflicting_files="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
 marker_files="$(git grep -IlE '^(<<<<<<<|=======|>>>>>>>)' -- . 2>/dev/null || true)"
 conflicting_files="$(printf '%s\n%s\n' "$conflicting_files" "$marker_files" | sed '/^$/d' | sort -u)"
 conflicting_file_count="$(printf '%s\n' "$conflicting_files" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+conflicts_present=false
+if (( conflicting_file_count > 0 )); then
+  conflicts_present=true
+fi
 conflict_marker_lines=0
 
 if [[ -n "$conflicting_files" ]]; then
@@ -123,7 +127,7 @@ Remove \`agent:needs-human\` and the \`agent:rebase-attempt-*\` labels only afte
   exit 0
 fi
 
-if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" ]]; then
+if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" && "$conflicts_present" == "true" ]]; then
   next_attempt=$((current_attempt + 1))
   old_label="agent:rebase-attempt-${current_attempt}"
   new_label="agent:rebase-attempt-${next_attempt}"

@@ -208,16 +208,20 @@ jobs:
                 ;;
               clean)
                 echo "  clean — no action needed."
-                riddim-release/.github/scripts/update-watcher-status.sh \
-                  "$pr_number" "$CONSUMER_REPO" "$state" "no action" \
-                  "PR is already mergeable."
+                if [[ "${DRY_RUN}" != "true" ]]; then
+                  riddim-release/.github/scripts/update-watcher-status.sh \
+                    "$pr_number" "$CONSUMER_REPO" "$state" "no action" \
+                    "PR is already mergeable."
+                fi
                 skipped=$(( skipped + 1 ))
                 ;;
               blocked|unstable)
                 echo "  ${state} — CI/review territory, not rebase territory. Skipping."
-                riddim-release/.github/scripts/update-watcher-status.sh \
-                  "$pr_number" "$CONSUMER_REPO" "$state" "skipped" \
-                  "CI/review state is outside rebase automation."
+                if [[ "${DRY_RUN}" != "true" ]]; then
+                  riddim-release/.github/scripts/update-watcher-status.sh \
+                    "$pr_number" "$CONSUMER_REPO" "$state" "skipped" \
+                    "CI/review state is outside rebase automation."
+                fi
                 skipped=$(( skipped + 1 ))
                 ;;
               unknown)
