@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # Checks a pull request diff before an agent reviewer runs.
 #
-# Usage: guard.sh <pr-number> [repo]
-#   pr-number  Required. The pull request number to inspect.
+# Usage: guard.sh [<pr-number>] [repo]
+#   pr-number  Pull request number to inspect. May also be supplied via $PR_NUMBER env var.
 #   repo       Optional. Defaults to $GITHUB_REPOSITORY.
 #
 # Environment variables (all optional):
-#   MAX_DIFF_LINES          Max allowed changed lines (additions + deletions). Default: 500.
-#   GUARD_MAX_FILES         Max allowed changed files. Default: 30.
-#   GUARD_SENSITIVE_PATHS   Colon-separated additional sensitive path globs to block.
-#                           These extend the built-in list below.
+#   PR_NUMBER             Pull request number (alternative to positional arg).
+#   GUARD_MAX_LINES       Max allowed changed lines (additions + deletions). Default: 1000.
+#   GUARD_MAX_FILES       Max allowed changed files. Default: 30.
+#   GUARD_MAX_ATTEMPTS    Max automated attempt cycles before cap-hit block. Default: 3.
+#   GUARD_SENSITIVE_PATHS Colon-separated additional sensitive path globs to block.
+#                         These extend the built-in list below.
+#
+# Legacy alias (still accepted for backward compatibility):
+#   MAX_DIFF_LINES        Alias for GUARD_MAX_LINES.
 #
 # Exit codes:
 #   0  Guard passed — safe to proceed.
@@ -27,28 +32,36 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 <pull-request-number> [repo]" >&2
+  echo "Usage: $0 [<pull-request-number>] [repo]" >&2
+  echo "  PR number may also be set via \$PR_NUMBER env var." >&2
 }
 
-if [[ $# -lt 1 ]]; then
+# Accept PR number from env var or positional arg
+if [[ $# -ge 1 && "$1" =~ ^[0-9]+$ ]]; then
+  PR_NUMBER="$1"
+  shift
+elif [[ -n "${PR_NUMBER:-}" ]]; then
+  : # already set via env
+else
   usage
   exit 2
 fi
 
-PR_NUMBER="$1"
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "Error: pull-request-number must be a positive integer, got: $PR_NUMBER" >&2
   exit 2
 fi
 
-REPO="${2:-${GITHUB_REPOSITORY:-}}"
+REPO="${1:-${GITHUB_REPOSITORY:-}}"
 REPO_FLAG=""
 if [[ -n "$REPO" ]]; then
   REPO_FLAG="--repo $REPO"
 fi
 
-MAX_DIFF_LINES="${MAX_DIFF_LINES:-500}"
+# GUARD_MAX_LINES is the canonical name; MAX_DIFF_LINES is a legacy alias.
+GUARD_MAX_LINES="${GUARD_MAX_LINES:-${MAX_DIFF_LINES:-1000}}"
 GUARD_MAX_FILES="${GUARD_MAX_FILES:-30}"
+GUARD_MAX_ATTEMPTS="${GUARD_MAX_ATTEMPTS:-3}"
 
 # ---------------------------------------------------------------------------
 # Helper: post block actions (label + comment)
@@ -79,8 +92,17 @@ if echo "$pr_labels" | grep -qF "agent:pause"; then
   block "PR has label 'agent:pause' (kill switch active)"
 fi
 
-if echo "$pr_labels" | grep -qF "agent:attempt-3"; then
-  block "PR has label 'agent:attempt-3' (attempt cap hit — max 3 automated attempts reached)"
+attempt_cap_hit=false
+for n in $(seq 1 99); do
+  if echo "$pr_labels" | grep -qF "agent:attempt-${n}"; then
+    if (( n >= GUARD_MAX_ATTEMPTS )); then
+      attempt_cap_hit=true
+      break
+    fi
+  fi
+done
+if [[ "$attempt_cap_hit" == "true" ]]; then
+  block "PR attempt cap hit (max ${GUARD_MAX_ATTEMPTS} automated attempts reached)"
 fi
 
 if echo "$pr_labels" | grep -qF "agent:needs-human"; then
@@ -131,8 +153,8 @@ if (( file_count > GUARD_MAX_FILES )); then
   block "Diff exceeds file threshold: ${file_count} files changed (cap: ${GUARD_MAX_FILES})"
 fi
 
-if (( line_count > MAX_DIFF_LINES )); then
-  block "Diff exceeds line threshold: ${line_count} changed lines (cap: ${MAX_DIFF_LINES})"
+if (( line_count > GUARD_MAX_LINES )); then
+  block "Diff exceeds line threshold: ${line_count} changed lines (cap: ${GUARD_MAX_LINES})"
 fi
 
 # ---------------------------------------------------------------------------
@@ -167,16 +189,31 @@ fi
 glob_matches() {
   local path="$1"
   local pattern="$2"
-  local without_prefix
+  local without_prefix segment remainder
 
   [[ -n "$pattern" ]] || return 1
-  # shellcheck disable=SC2053 # Right-hand side is intentionally a glob pattern.
+
+  # Enable extended globbing for ** support.
+  shopt -s globstar extglob 2>/dev/null || true
+
+  # Direct bash glob match (handles simple patterns like *.pem, fastlane/*).
+  # shellcheck disable=SC2053
   [[ "$path" == $pattern ]] && return 0
 
+  # Handle ** prefix: strip **/  and match the remainder against any path suffix.
+  # e.g. "**/auth/**" should match "src/auth/login.js" and "auth/login.js".
   if [[ "$pattern" == \*\*/* ]]; then
     without_prefix="${pattern#\*\*/}"
-    # shellcheck disable=SC2053 # Right-hand side is intentionally a glob pattern.
+    # Direct match of the remainder against the full path.
+    # shellcheck disable=SC2053
     [[ "$path" == $without_prefix ]] && return 0
+    # Also try matching the remainder against every path suffix (handle nested dirs).
+    remainder="$path"
+    while [[ "$remainder" == */* ]]; do
+      remainder="${remainder#*/}"
+      # shellcheck disable=SC2053
+      [[ "$remainder" == $without_prefix ]] && return 0
+    done
   fi
 
   return 1

@@ -93,10 +93,16 @@ on:
         default: ""
 
       max_diff_lines:
-        description: "Max changed lines before guard blocks the run (default 500)"
+        description: "Max changed lines before guard blocks the run (default 1000)"
         required: false
         type: number
-        default: 500
+        default: 1000
+
+      max_attempts:
+        description: "Max automated fix-up cycles before cap-hit escalation (default 3)"
+        required: false
+        type: number
+        default: 3
 
       self_test_mode:
         description: "riddim-release self-test only: create deterministic artifacts without invoking Claude"
@@ -212,7 +218,8 @@ jobs:
         if: ${{ inputs.trigger_type == 'changes_requested' && steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
-          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+          GUARD_MAX_LINES: ${{ inputs.max_diff_lines }}
+          GUARD_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
         run: |
           curl -fsSL \
             https://raw.githubusercontent.com/RiddimSoftware/riddim-release/main/.github/scripts/guard.sh \
@@ -246,6 +253,55 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
+
+      # ── Cap-hit check ─────────────────────────────────────────────────────
+      - name: Check attempt cap
+        id: cap-check
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO: ${{ github.repository }}
+          GUARD_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
+        run: |
+          set -euo pipefail
+
+          labels="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name')"
+          cap="${GUARD_MAX_ATTEMPTS:-3}"
+          cap_hit=false
+          current_attempt=0
+
+          while IFS= read -r label; do
+            if [[ "$label" =~ ^agent:attempt-([0-9]+)$ ]]; then
+              n="${BASH_REMATCH[1]}"
+              if (( n > current_attempt )); then
+                current_attempt="$n"
+              fi
+            fi
+          done <<< "$labels"
+
+          if (( current_attempt >= cap )); then
+            cap_hit=true
+          fi
+
+          echo "cap_hit=$cap_hit" >> "$GITHUB_OUTPUT"
+          echo "current_attempt=$current_attempt" >> "$GITHUB_OUTPUT"
+
+          if [[ "$cap_hit" == "true" ]]; then
+            echo "::warning::Attempt cap hit (attempt ${current_attempt} >= cap ${cap}). Escalating to human review."
+            # Apply needs-human label
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "agent:needs-human" || true
+            # Disable auto-merge
+            gh pr merge "$PR_NUMBER" --repo "$REPO" --disable-auto || true
+            # Post escalation comment
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "**Agent attempt cap reached (attempt ${current_attempt}/${cap}).**
+
+Automated fix-up cycles have been exhausted. This PR requires human review before automation can resume.
+
+@SunnyPurewal — please review the outstanding feedback and either resolve it manually or remove the \`agent:needs-human\` label once the PR is ready for another automated pass.
+
+Auto-merge has been disabled." || true
+          fi
 
       # ── Deterministic self-test path ──────────────────────────────────────
       - name: Exercise workflow in self-test mode
@@ -377,7 +433,7 @@ jobs:
       # ── Assemble prompt ───────────────────────────────────────────────────
       - name: Assemble agent prompt
         id: prompt
-        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode && steps.cap-check.outputs.cap_hit != 'true' }}
         env:
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -466,7 +522,7 @@ jobs:
 
       # ── Run Claude Code agent ─────────────────────────────────────────────
       - name: Run developer agent
-        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode && steps.cap-check.outputs.cap_hit != 'true' }}
         uses: anthropics/claude-code-action@v1
         timeout-minutes: 25
         with:
@@ -475,7 +531,7 @@ jobs:
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
       - name: Enable auto-merge on PR
-        if: ${{ !inputs.self_test_mode && env.ACT != 'true' && steps.pause-guard.outputs.skip != 'true' }}
+        if: ${{ !inputs.self_test_mode && env.ACT != 'true' && steps.pause-guard.outputs.skip != 'true' && steps.cap-check.outputs.cap_hit != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
