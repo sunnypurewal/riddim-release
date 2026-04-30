@@ -41,7 +41,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: developer-self-test-${{ github.ref }}
+  group: developer-self-test-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -50,9 +50,9 @@ jobs:
     uses: ./.github/workflows/developer.yml
     with:
       trigger_type: ${{ inputs.trigger_type == 'issue-build' && 'issue_labeled' || 'changes_requested' }}
-      issue_number: ${{ inputs.trigger_type == 'issue-build' && 111 || 0 }}
+      issue_number: ${{ github.run_id }}
       issue_body: ${{ inputs.issue_body }}
-      pr_number: ${{ inputs.trigger_type == 'pr-fixup' && 111 || 0 }}
+      pr_number: ${{ inputs.trigger_type == 'pr-fixup' && github.run_id || 0 }}
       review_comments: ${{ inputs.review_comments }}
       prompt_override: "RIDDIM-111 deterministic self-test. Do not invoke the agent."
       self_test_mode: true
