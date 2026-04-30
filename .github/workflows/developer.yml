@@ -270,6 +270,14 @@ jobs:
           cap="${GUARD_MAX_ATTEMPTS:-3}"
           cap_hit=false
           current_attempt=0
+          if ! [[ "$cap" =~ ^[0-9]+$ ]]; then
+            echo "::error::max_attempts must be an integer. Got: ${cap}"
+            exit 1
+          fi
+          if (( cap < 1 )); then
+            echo "::error::max_attempts must be >= 1. Got: ${cap}"
+            exit 1
+          fi
 
           while IFS= read -r label; do
             if [[ "$label" =~ ^agent:attempt-([0-9]+)$ ]]; then

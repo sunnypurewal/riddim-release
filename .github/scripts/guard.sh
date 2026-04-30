@@ -63,6 +63,11 @@ GUARD_MAX_LINES="${GUARD_MAX_LINES:-${MAX_DIFF_LINES:-1000}}"
 GUARD_MAX_FILES="${GUARD_MAX_FILES:-30}"
 GUARD_MAX_ATTEMPTS="${GUARD_MAX_ATTEMPTS:-3}"
 
+if ! [[ "$GUARD_MAX_ATTEMPTS" =~ ^[0-9]+$ ]]; then
+  echo "Error: GUARD_MAX_ATTEMPTS must be a positive integer, got: $GUARD_MAX_ATTEMPTS" >&2
+  exit 2
+fi
+
 # ---------------------------------------------------------------------------
 # Helper: post block actions (label + comment)
 # ---------------------------------------------------------------------------
