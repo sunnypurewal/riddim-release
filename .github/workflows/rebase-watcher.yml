@@ -183,6 +183,9 @@ jobs:
                     --field pr_head_sha="$head_sha" \
                     --field pr_branch="$head_ref" \
                     --field base_branch="$base_ref"
+                  riddim-release/.github/scripts/update-watcher-status.sh \
+                    "$pr_number" "$CONSUMER_REPO" "$state" "dispatched auto-rebase" \
+                    "Workflow: \`auto-rebase.yml\`."
                 fi
                 routed_behind=$(( routed_behind + 1 ))
                 ;;
@@ -191,24 +194,34 @@ jobs:
                   echo "  [dry-run] Would dispatch agent-rebase (E9) for PR #${pr_number}."
                 else
                   echo "  Dispatching agent-rebase (E9) for PR #${pr_number}..."
-                  gh workflow run agent-rebase.yml \
-                    --repo RiddimSoftware/riddim-release \
-                    --field consumer_repo="$CONSUMER_REPO" \
-                    --field pr_number="$pr_number" \
-                    --field base_branch="$base_ref"
+                  # E9 workflow implementation lands separately. Until that PR is
+                  # merged, keep dirty PRs observable and human-gated rather than
+                  # dispatching a workflow that cannot safely target consumers.
+                  gh pr edit "$pr_number" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" 2>/dev/null || true
+                  gh pr comment "$pr_number" --repo "$CONSUMER_REPO" \
+                    --body "**Rebase Watcher:** PR has merge conflicts (\`dirty\` state). E9 agent-conflict resolution is not yet deployed on main. Labelling \`agent:needs-human\` until the E9 package ships." 2>/dev/null || true
+                  riddim-release/.github/scripts/update-watcher-status.sh \
+                    "$pr_number" "$CONSUMER_REPO" "$state" "needs human" \
+                    "E9 agent-conflict workflow is not deployed on main yet."
                 fi
                 routed_dirty=$(( routed_dirty + 1 ))
                 ;;
               clean)
                 echo "  clean — no action needed."
+                riddim-release/.github/scripts/update-watcher-status.sh \
+                  "$pr_number" "$CONSUMER_REPO" "$state" "no action" \
+                  "PR is already mergeable."
                 skipped=$(( skipped + 1 ))
                 ;;
               blocked|unstable)
                 echo "  ${state} — CI/review territory, not rebase territory. Skipping."
+                riddim-release/.github/scripts/update-watcher-status.sh \
+                  "$pr_number" "$CONSUMER_REPO" "$state" "skipped" \
+                  "CI/review state is outside rebase automation."
                 skipped=$(( skipped + 1 ))
                 ;;
               unknown)
-                echo "::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
+                echo "  ::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
                 errors=$(( errors + 1 ))
                 ;;
               *)
