@@ -13,6 +13,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DEV_BOT_PAT }}
         run: |
-          # gh pr merge --auto exits 0 if auto-merge is already enabled
-          gh pr merge --auto --squash "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" || true
+          set -euo pipefail
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_REPO="${{ github.repository }}"
+
+          if gh pr view "$PR_NUMBER" --repo "$PR_REPO" --json autoMergeRequest --jq '.autoMergeRequest != null' | grep -qx true; then
+            echo "Auto-merge already enabled for PR #$PR_NUMBER"
+            exit 0
+          fi
+
+          gh pr merge --auto --squash "$PR_NUMBER" --repo "$PR_REPO"
