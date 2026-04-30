@@ -1,0 +1,198 @@
+# Self-test for .github/workflows/reviewer.yml.
+#
+# Run before merging changes to reviewer.yml or reviewer prompt files:
+#   gh workflow run _rev-self-test.yml \
+#     --repo RiddimSoftware/riddim-release \
+#     -f expected_verdict=approve
+#
+#   gh workflow run _rev-self-test.yml \
+#     --repo RiddimSoftware/riddim-release \
+#     -f expected_verdict=request-changes
+#
+# The self-test opens a throwaway PR in riddim-release, invokes the reusable
+# reviewer workflow with a mocked verdict (no agent API calls), asserts that
+# the reviewer-agent-passed check matches the expected state, then cleans up.
+
+name: Reviewer Workflow Self-Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_verdict:
+        description: "Verdict to mock: approve or request-changes."
+        required: true
+        type: choice
+        options:
+          - approve
+          - request-changes
+        default: approve
+      cleanup:
+        description: "Delete throwaway PR and branch after assertions."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: rev-self-test-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Create throwaway PR
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.open_pr.outputs.pr_number }}
+      branch: ${{ steps.open_pr.outputs.branch }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
+          fetch-depth: 0
+
+      - name: Create throwaway branch and PR
+        id: open_pr
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          branch="selftest/rev-${RUN_ID}"
+          git config user.email "reviewer-bot@riddimsoftware.com"
+          git config user.name "reviewer-bot"
+          git checkout -b "${branch}"
+
+          # Minimal throwaway change — add a comment line to a docs file.
+          echo "# rev-self-test run ${RUN_ID}" >> docs/self-test-scratch.md
+          git add docs/self-test-scratch.md
+          git commit -m "chore: reviewer self-test throwaway [run ${RUN_ID}]"
+          git push origin "${branch}"
+
+          pr_number="$(gh pr create \
+            --repo "${REPO}" \
+            --head "${branch}" \
+            --base main \
+            --title "chore: reviewer self-test throwaway [run ${RUN_ID}]" \
+            --body "Throwaway PR for reviewer workflow self-test run ${RUN_ID}. Safe to close." \
+            --json number \
+            --jq '.number')"
+
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
+          echo "Opened throwaway PR #${pr_number} on branch ${branch}"
+
+  invoke-reviewer:
+    name: Invoke reviewer.yml with mock verdict
+    needs: setup
+    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+    with:
+      pr_number: ${{ needs.setup.outputs.pr_number }}
+      mock_reviewer_verdict: ${{ inputs.expected_verdict }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+
+  assert-and-cleanup:
+    name: Assert status check and clean up
+    needs: [setup, invoke-reviewer]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Resolve expected conclusion
+        id: expected
+        env:
+          EXPECTED_VERDICT: ${{ inputs.expected_verdict }}
+        run: |
+          case "${EXPECTED_VERDICT}" in
+            approve)          echo "conclusion=success" >> "${GITHUB_OUTPUT}" ;;
+            request-changes)  echo "conclusion=failure" >> "${GITHUB_OUTPUT}" ;;
+            *)
+              echo "Unsupported expected_verdict: ${EXPECTED_VERDICT}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Assert reviewer-agent-passed check state
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.setup.outputs.pr_number }}
+          EXPECTED_CONCLUSION: ${{ steps.expected.outputs.conclusion }}
+          REVIEWER_STATUS_CHECK: reviewer-agent-passed
+        run: |
+          set -euo pipefail
+
+          # Resolve head SHA for the throwaway PR.
+          head_sha="$(gh pr view "${PR_NUMBER}" \
+            --repo "${REPO}" \
+            --json headRefOid \
+            --jq '.headRefOid')"
+
+          echo "Asserting check '${REVIEWER_STATUS_CHECK}' on SHA ${head_sha} == ${EXPECTED_CONCLUSION}"
+
+          # Poll for the check-run (it may take a moment to appear).
+          for i in $(seq 1 10); do
+            actual="$(gh api "repos/${REPO}/commits/${head_sha}/check-runs" \
+              --paginate \
+              --jq ".check_runs[] | select(.name == \"${REVIEWER_STATUS_CHECK}\") | .conclusion" \
+              2>/dev/null | tail -1)"
+
+            if [[ -n "${actual}" && "${actual}" != "null" ]]; then
+              break
+            fi
+
+            echo "Attempt ${i}: check not yet present, waiting 6s..."
+            sleep 6
+          done
+
+          if [[ -z "${actual}" || "${actual}" == "null" ]]; then
+            echo "::error::Check '${REVIEWER_STATUS_CHECK}' not found on SHA ${head_sha}" >&2
+            exit 1
+          fi
+
+          if [[ "${actual}" != "${EXPECTED_CONCLUSION}" ]]; then
+            echo "::error::Expected conclusion '${EXPECTED_CONCLUSION}' but got '${actual}'" >&2
+            exit 1
+          fi
+
+          echo "Assertion passed: ${REVIEWER_STATUS_CHECK} == ${actual}"
+
+      - name: Close throwaway PR
+        if: ${{ inputs.cleanup }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.setup.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh pr close "${PR_NUMBER}" \
+            --repo "${REPO}" \
+            --comment "Closing reviewer workflow self-test PR (cleanup)."
+
+      - name: Delete throwaway branch
+        if: ${{ inputs.cleanup }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ needs.setup.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" --delete "${BRANCH}" || true
+
+      - name: Fail if reviewer workflow failed unexpectedly
+        if: ${{ needs.invoke-reviewer.result == 'failure' && inputs.expected_verdict == 'approve' }}
+        run: |
+          echo "::error::reviewer.yml failed but expected_verdict was approve — check reviewer workflow logs." >&2
+          exit 1
+
+      - name: Note expected failure for request-changes verdict
+        if: ${{ needs.invoke-reviewer.result == 'failure' && inputs.expected_verdict == 'request-changes' }}
+        run: |
+          echo "reviewer.yml exited non-zero as expected for request-changes verdict — assertion already confirmed check state."
