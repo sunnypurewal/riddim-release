@@ -6,7 +6,7 @@ on:
 
 jobs:
   auto-merge:
-    if: github.event.label.name == 'automate'
+    if: github.event.label.name == 'automate' || github.event.label.name == 'autonomous'
     runs-on: ubuntu-latest
     steps:
       - name: Enable auto-merge
