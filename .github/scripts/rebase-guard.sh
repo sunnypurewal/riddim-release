@@ -122,7 +122,7 @@ Remove \`agent:needs-human\` and the \`agent:rebase-attempt-*\` labels only afte
   exit 0
 fi
 
-if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" ]]; then
+if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" && -n "$conflicting_files" ]]; then
   next_attempt=$((current_attempt + 1))
   old_label="agent:rebase-attempt-${current_attempt}"
   new_label="agent:rebase-attempt-${next_attempt}"
@@ -150,7 +150,7 @@ ${conflicting_files}
 fi
 
 codeowners_file=""
-for candidate in CODEOWNERS .github/CODEOWNERS docs/CODEOWNERS; do
+for candidate in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
   if [[ -f "$candidate" ]]; then
     codeowners_file="$candidate"
     break
