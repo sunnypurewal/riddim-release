@@ -1,0 +1,111 @@
+# ============================================================================
+# automate-auto-merge.yml — Enable auto-merge when `automate` is labeled
+# RiddimSoftware/riddim-release
+#
+# SHARED INFRASTRUCTURE — HIGH BLAST RADIUS
+# Consumers can call this workflow from their own pull_request:labeled wrapper.
+#
+# PURPOSE:
+#   CLI-opened autonomous PRs do not run developer.yml, so they miss the
+#   developer workflow's auto-merge post-step. This workflow lets any enrolled
+#   repo enable GitHub auto-merge by adding the `automate` label to a PR.
+#
+# REQUIRED SECRET:
+#   DEV_BOT_PAT / dev_bot_pat — developer-bot token with pull_requests:write.
+# ============================================================================
+
+name: Automate Auto-Merge
+
+on:
+  pull_request:
+    types: [labeled]
+
+  workflow_call:
+    inputs:
+      pr_number:
+        description: "Pull request number to enable auto-merge for."
+        required: true
+        type: number
+      repository:
+        description: "Owner/repo containing the pull request."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      dev_bot_pat:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge
+    if: >-
+      github.event_name == 'workflow_call' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'automate')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Enable GitHub auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || secrets.DEV_BOT_PAT }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REPOSITORY: ${{ inputs.repository || '' }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number || 0 }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="${INPUT_REPOSITORY:-$EVENT_REPOSITORY}"
+          pr_number="${INPUT_PR_NUMBER}"
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            pr_number="$EVENT_PR_NUMBER"
+          fi
+
+          if [[ -z "$repo" ]]; then
+            echo "::error::Repository is required."
+            exit 2
+          fi
+
+          if [[ -z "$pr_number" || "$pr_number" == "0" ]]; then
+            echo "::error::PR number is required."
+            exit 2
+          fi
+
+          pr_json="$(gh pr view "$pr_number" \
+            --repo "$repo" \
+            --json number,url,autoMergeRequest,state,isDraft)"
+
+          pr_url="$(jq -r '.url // empty' <<< "$pr_json")"
+          state="$(jq -r '.state // empty' <<< "$pr_json")"
+          is_draft="$(jq -r '.isDraft // false' <<< "$pr_json")"
+
+          if [[ -z "$pr_url" ]]; then
+            echo "::error::Could not resolve PR #${pr_number} in ${repo}."
+            exit 1
+          fi
+
+          if [[ "$state" != "OPEN" ]]; then
+            echo "Skipping auto-merge for ${pr_url}: PR state is ${state}."
+            exit 0
+          fi
+
+          if [[ "$is_draft" == "true" ]]; then
+            echo "Skipping auto-merge for ${pr_url}: PR is draft."
+            exit 0
+          fi
+
+          if jq -e '.autoMergeRequest != null' <<< "$pr_json" >/dev/null; then
+            echo "Auto-merge already enabled for ${pr_url}."
+            exit 0
+          fi
+
+          echo "Enabling auto-merge for ${pr_url}."
+          gh pr merge --auto --squash "$pr_url"
+
