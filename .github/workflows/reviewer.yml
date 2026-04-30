@@ -1,0 +1,194 @@
+# Shared infrastructure - high blast radius.
+#
+# Consumer repositories should call this reusable workflow from a pull_request
+# trigger equivalent to:
+#
+# on:
+#   pull_request:
+#     types: [opened, synchronize, ready_for_review]
+#
+# jobs:
+#   reviewer:
+#     if: >-
+#       github.event.pull_request.user.login == 'developer-bot' &&
+#       github.event.sender.login != 'reviewer-bot' &&
+#       !contains(github.event.pull_request.labels.*.name, 'agent:pause')
+#     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+#     with:
+#       pr_number: ${{ github.event.pull_request.number }}
+#     secrets:
+#       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#       REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+#
+# Constants shared with developer.yml consumers:
+# - Developer bot login: developer-bot
+# - Reviewer bot login: reviewer-bot
+# - Pause label: agent:pause
+# - Human-review label: agent:needs-human
+# - Required status check: reviewer-agent-passed
+
+name: Reviewer Agent
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Caller repository pull request number to review.
+        required: true
+        type: string
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: OAuth token used by claude-code-action in later wiring.
+        required: true
+      REVIEWER_BOT_PAT:
+        description: Reviewer bot token used for PR comments/reviews in later wiring.
+        required: true
+
+env:
+  DEVELOPER_BOT_LOGIN: developer-bot
+  REVIEWER_BOT_LOGIN: reviewer-bot
+  PAUSE_LABEL: agent:pause
+  NEEDS_HUMAN_LABEL: agent:needs-human
+  REVIEWER_STATUS_CHECK: reviewer-agent-passed
+
+concurrency:
+  group: reviewer-agent-pr-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  reviewer-stub:
+    name: Reviewer agent
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout local workspace for act
+        if: ${{ env.ACT == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Checkout riddim-release guard scripts
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ github.workflow_sha }}
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      - name: Print reusable workflow inputs
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          echo "reviewer workflow skeleton"
+          echo "pr_number=${PR_NUMBER}"
+          echo "status_check=${REVIEWER_STATUS_CHECK}"
+          echo "developer_bot=${DEVELOPER_BOT_LOGIN}"
+          echo "reviewer_bot=${REVIEWER_BOT_LOGIN}"
+          echo "pause_label=${PAUSE_LABEL}"
+          echo "needs_human_label=${NEEDS_HUMAN_LABEL}"
+
+      - name: Run reviewer guard
+        id: guard
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set +e
+          output="$(bash .github/scripts/guard.sh 2>&1)"
+          status=$?
+          set -e
+
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "output<<EOF"
+            echo "${output}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "${output}"
+          echo "guard_exit_code=${status}"
+
+      - name: Mark PR for human review when guard blocks
+        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          GUARD_OUTPUT: ${{ steps.guard.outputs.output }}
+        run: |
+          comment_body="$(mktemp)"
+          {
+            echo "Reviewer guard blocked autonomous review for PR #${PR_NUMBER}."
+            echo
+            echo "Guard output:"
+            echo '```'
+            echo "${GUARD_OUTPUT}"
+            echo '```'
+          } > "${comment_body}"
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: gh pr edit ${PR_NUMBER} --add-label ${NEEDS_HUMAN_LABEL}"
+            echo "act dry-run: gh pr comment ${PR_NUMBER} --body-file ${comment_body}"
+          else
+            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label "${NEEDS_HUMAN_LABEL}"
+            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file "${comment_body}"
+          fi
+
+          echo "Guard blocked autonomous review; skipping reviewer agent."
+
+      - name: Checkout caller PR workspace
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ inputs.pr_number }}/merge
+          path: consumer
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      - name: Load reviewer prompt
+        if: ${{ steps.guard.outputs.exit_code == '0' }}
+        id: reviewer_prompt
+        run: |
+          {
+            echo "prompt<<EOF"
+            cat .github/prompts/reviewer-verdict.md
+            echo
+            echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
+            echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+
+      - name: Validate reviewer prompt for act
+        if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
+        env:
+          REVIEWER_PROMPT: ${{ steps.reviewer_prompt.outputs.prompt }}
+        run: |
+          for required in \
+            "gh pr review" \
+            "--approve" \
+            "--request-changes" \
+            "git commit" \
+            "git push" \
+            "consumer/CLAUDE.md" \
+            "consumer/AGENTS.md"; do
+            if ! grep -F -- "${required}" <<< "${REVIEWER_PROMPT}" > /dev/null; then
+              echo "Reviewer prompt is missing required text: ${required}" >&2
+              exit 1
+            fi
+          done
+
+          echo "Reviewer prompt loaded and contains required verdict instructions."
+
+      - name: Run reviewer agent
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEWER_STATUS_CHECK: ${{ env.REVIEWER_STATUS_CHECK }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
+          prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
