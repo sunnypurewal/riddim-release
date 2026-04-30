@@ -147,21 +147,7 @@ jobs:
             jira_ref="$JIRA_TICKET"
           fi
 
-          body="## Why
-
-Implements ${jira_ref}: ${JIRA_SUMMARY}
-
-## What changed
-
-See commits on branch \`${BRANCH}\`.
-
-## Test plan
-
-- Review diff and confirm acceptance criteria from ${jira_ref} are met.
-
-Resolves ${JIRA_TICKET}
-
-Release-Note: Omitted pending review."
+          body=$'## Why\n\n'"Implements ${jira_ref}: ${JIRA_SUMMARY}"$'\n\n## What changed\n\n'"See commits on branch \`${BRANCH}\`."$'\n\n## Test plan\n\n'"- Review diff and confirm acceptance criteria from ${jira_ref} are met."$'\n\n'"Resolves ${JIRA_TICKET}"$'\n\nRelease-Note: Omitted pending review.'
 
           pr_url="$(gh pr create \
             --repo "$GITHUB_REPOSITORY" \
