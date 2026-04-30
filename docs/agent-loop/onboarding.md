@@ -385,11 +385,41 @@ See [`failure-runbook.md`](failure-runbook.md) for diagnosis and recovery steps 
 
 ---
 
+## Configuration
+
+### Rebase guard thresholds (E10)
+
+The rebase guard (`rebase-guard.sh`) enforces three safety limits on automated
+rebases. All three have defaults that can be overridden per consumer repo via
+workflow inputs or env vars.
+
+| Variable | Default | Override via |
+|---|---|---|
+| `REBASE_MAX_ATTEMPTS` | `3` | `rebase_max_attempts` workflow input on `agent-rebase.yml`; env var in `auto-rebase.yml` guard step |
+| `REBASE_MAX_FILES` | `8` | `rebase_max_files` workflow input on `agent-rebase.yml` |
+| `REBASE_MAX_LINES` | `200` | `rebase_max_lines` workflow input on `agent-rebase.yml` |
+
+Example override in the consumer repo's trigger wrapper:
+
+```yaml
+uses: RiddimSoftware/riddim-release/.github/workflows/agent-rebase.yml@main
+with:
+  rebase_max_attempts: 5
+  rebase_max_files: 12
+  rebase_max_lines: 400
+```
+
+For full details on the attempt counter, CODEOWNERS veto, and comment markers, see
+[`e10-rebase-guards.md`](e10-rebase-guards.md).
+
+---
+
 ## Related resources
 
 - [`e1-checklist.md`](e1-checklist.md) — org-level prerequisites (do this before enrolling any repo)
 - [`failure-runbook.md`](failure-runbook.md) — diagnosis and recovery
 - [`trigger-wrapper-template.yml`](trigger-wrapper-template.yml) — canonical wrapper template
+- [`e10-rebase-guards.md`](e10-rebase-guards.md) — rebase guard thresholds, attempt counter, CODEOWNERS veto
 - [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation
 - [RIDDIM-91](https://riddim.atlassian.net/browse/RIDDIM-91) — parent initiative
 - [RIDDIM-99](https://riddim.atlassian.net/browse/RIDDIM-99) — this epic
