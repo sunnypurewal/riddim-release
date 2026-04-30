@@ -10,7 +10,7 @@ on:
       bump:
         description: 'Version bump type'
         type: choice
-        default: patch
+        default: minor
         options: [patch, minor, major]
       dry_run:
         description: 'Skip TestFlight upload and draft release'
