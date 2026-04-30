@@ -227,13 +227,14 @@ jobs:
         run: |
           {
             echo "prompt<<EOF"
+            cat .github/prompts/reviewer-verdict.md
+            echo
+            echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
+            echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
             if [[ -n "${PROMPT_OVERRIDE}" ]]; then
-              echo "${PROMPT_OVERRIDE}"
-            else
-              cat .github/prompts/reviewer-verdict.md
               echo
-              echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
-              echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
+              echo "Prompt override (applies after baseline safety and instruction text):"
+              printf '%s\n' "${PROMPT_OVERRIDE}"
             fi
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
@@ -366,7 +367,7 @@ jobs:
       # Possible mergeable_state values: clean, dirty, blocked, behind,
       # unstable, draft, unknown.
       - name: Pre-merge mergeable_state re-check
-        if: ${{ steps.reviewer_verdict.outputs.verdict == 'APPROVED' && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ steps.reviewer_verdict.outputs.verdict == 'APPROVED' && steps.guard.outputs.exit_code == '0' && inputs.mock_reviewer_verdict == '' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_NUMBER: ${{ inputs.pr_number }}
