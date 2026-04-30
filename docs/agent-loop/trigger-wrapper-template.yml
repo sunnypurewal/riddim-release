@@ -12,7 +12,7 @@
 # Triggers:
 # - Developer: issue labeled agent:build (opens a PR from the issue body)
 # - Reviewer:  PR opened or synchronized by developer-bot (reviews and approves/rejects)
-# - Developer fixup: PR review requests changes from reviewer-bot
+# - Developer fixup: PR review requests changes from riddim-reviewer-bot
 
 name: Autonomous PR Loop
 
@@ -50,14 +50,14 @@ jobs:
 
   # -----------------------------------------------------------------
   # Developer: fix-up after review
-  # Fires when reviewer-bot requests changes on a PR.
+  # Fires when riddim-reviewer-bot requests changes on a PR.
   # Guards: agent:pause or agent:needs-human on the PR suppress the run.
   # -----------------------------------------------------------------
   developer-fixup:
     if: >-
       github.event_name == 'pull_request_review' &&
       github.event.review.state == 'changes_requested' &&
-      github.event.review.user.login == 'reviewer-bot' &&
+      github.event.review.user.login == 'riddim-reviewer-bot' &&
       !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
       !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
     uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
@@ -78,7 +78,7 @@ jobs:
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'ready_for_review') &&
       github.event.pull_request.user.login == 'developer-bot' &&
-      github.event.sender.login != 'reviewer-bot' &&
+      github.event.sender.login != 'riddim-reviewer-bot' &&
       !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
       !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
