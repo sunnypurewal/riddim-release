@@ -131,6 +131,7 @@ jobs:
             echo "- Prompt override bytes: ${#PROMPT_OVERRIDE}"
             echo ""
             echo "Initial-build prompt wiring is active for issue-build runs."
+            echo "Fix-up prompt wiring is active for pr-fixup runs."
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Check out workflow repository
@@ -189,8 +190,55 @@ jobs:
         run: |
           echo "Skipping claude-code-action because ACT=true local smoke test."
 
-      - name: Keep pr-fixup as stub until E2-S3
+      - name: Render fix-up prompt
+        id: fixup_prompt
         if: ${{ inputs.trigger_type == 'pr-fixup' }}
         shell: bash
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEW_COMMENTS: ${{ inputs.review_comments }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
         run: |
-          echo "pr-fixup prompt wiring lands in E2-S3."
+          set -euo pipefail
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "::error::pr_number is required for pr-fixup runs."
+            exit 1
+          fi
+
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            rendered_prompt="$PROMPT_OVERRIDE"
+          else
+            template_path=".github/prompts/developer-fixup.md"
+            rendered_prompt="$(<"$template_path")"
+            rendered_prompt="${rendered_prompt//\{\{ pr_number \}\}/$PR_NUMBER}"
+            rendered_prompt="${rendered_prompt//\{\{ review_comments \}\}/$REVIEW_COMMENTS}"
+          fi
+
+          {
+            echo "prompt<<EOF"
+            printf '%s\n' "$rendered_prompt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Fix-up prompt"
+            echo ""
+            echo "- PR number: $PR_NUMBER"
+            echo "- Rendered prompt bytes: ${#rendered_prompt}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run fix-up developer agent
+        if: ${{ inputs.trigger_type == 'pr-fixup' && env.ACT != 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.DEV_BOT_PAT }}
+          base_branch: main
+          prompt: ${{ steps.fixup_prompt.outputs.prompt }}
+
+      - name: Skip fix-up agent during local act smoke tests
+        if: ${{ inputs.trigger_type == 'pr-fixup' && env.ACT == 'true' }}
+        shell: bash
+        run: |
+          echo "Skipping fix-up claude-code-action because ACT=true local smoke test."
