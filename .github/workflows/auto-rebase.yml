@@ -112,8 +112,70 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Clone consumer repo as developer-bot
+      - name: Rebase guard — attempt counter check
+        id: guard
         if: steps.pause-check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REBASE_MAX_ATTEMPTS: "3"
+        run: |
+          set -euo pipefail
+          MARKER="<!-- riddim:watcher-status -->"
+          OWNER="${CONSUMER_REPO%%/*}"
+          REPO="${CONSUMER_REPO##*/}"
+
+          labels="$(gh pr view "$PR_NUMBER" --repo "$CONSUMER_REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)"
+
+          current_attempt=0
+          while IFS= read -r label; do
+            case "$label" in
+              agent:rebase-attempt-*)
+                n="${label#agent:rebase-attempt-}"
+                if [[ "$n" =~ ^[0-9]+$ ]] && (( n > current_attempt )); then
+                  current_attempt="$n"
+                fi
+                ;;
+            esac
+          done <<< "$labels"
+
+          if (( current_attempt >= REBASE_MAX_ATTEMPTS )); then
+            echo "decision=attempt-cap-exceeded" >> "$GITHUB_OUTPUT"
+            echo "::warning::Attempt cap reached (${current_attempt}/${REBASE_MAX_ATTEMPTS}). Applying agent:needs-human."
+            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" >/dev/null 2>&1 || true
+
+            # Upsert watcher-status comment
+            TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            BODY="${MARKER}
+          **Last watcher run:** ${TIMESTAMP}
+          **State:** guard-blocked
+          **Action:** agent:needs-human applied (attempt cap ${current_attempt}/${REBASE_MAX_ATTEMPTS})"
+            existing_id="$(gh api "repos/${CONSUMER_REPO}/issues/${PR_NUMBER}/comments" \
+              --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null | tail -n 1 || true)"
+            if [[ -n "$existing_id" ]]; then
+              gh api --method PATCH "/repos/${CONSUMER_REPO}/issues/comments/${existing_id}" \
+                --field "body=${BODY}" >/dev/null 2>&1 || true
+            else
+              gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$BODY" >/dev/null 2>&1 || true
+            fi
+            exit 0
+          fi
+
+          # Increment attempt label
+          next_attempt=$((current_attempt + 1))
+          if (( current_attempt > 0 )); then
+            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" \
+              --remove-label "agent:rebase-attempt-${current_attempt}" >/dev/null 2>&1 || true
+          fi
+          gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" \
+            --add-label "agent:rebase-attempt-${next_attempt}" >/dev/null 2>&1 || true
+
+          echo "decision=ok" >> "$GITHUB_OUTPUT"
+          echo "Guard passed: attempt ${next_attempt}/${REBASE_MAX_ATTEMPTS}."
+
+      - name: Clone consumer repo as developer-bot
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.consumer_repo }}
@@ -122,18 +184,18 @@ jobs:
           fetch-depth: 0
 
       - name: Configure git identity (developer-bot)
-        if: steps.pause-check.outputs.skip != 'true'
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         run: |
           git config user.name "developer-bot"
           git config user.email "developer-bot@users.noreply.github.com"
 
       - name: Fetch base branch
-        if: steps.pause-check.outputs.skip != 'true'
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         run: |
           git fetch origin "${{ inputs.base_branch }}"
 
       - name: Verify PR head SHA matches expected (anti-clobber)
-        if: steps.pause-check.outputs.skip != 'true'
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         id: sha-check
         env:
           EXPECTED_SHA: ${{ inputs.pr_head_sha }}
@@ -150,7 +212,7 @@ jobs:
           echo "SHA check passed: ${actual_sha}"
 
       - name: Rebase onto base branch
-        if: steps.pause-check.outputs.skip != 'true'
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         id: rebase
         env:
           BASE_BRANCH: ${{ inputs.base_branch }}
@@ -169,7 +231,7 @@ jobs:
           echo "Rebase succeeded."
 
       - name: Push rebased branch (force-with-lease)
-        if: steps.pause-check.outputs.skip != 'true' && steps.rebase.outputs.rebase_failed != 'true'
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok' && steps.rebase.outputs.rebase_failed != 'true'
         env:
           PR_BRANCH: ${{ inputs.pr_branch }}
           EXPECTED_HEAD: ${{ inputs.pr_head_sha }}
@@ -233,9 +295,10 @@ Diagnostics:
 - Expected head: \`${EXPECTED_HEAD}\`
 - Watcher run: ${RUN_URL}" 2>/dev/null || true
 
-      - name: Log completion
-        if: steps.pause-check.outputs.skip != 'true' && steps.rebase.outputs.rebase_failed != 'true'
+      - name: Log completion and update watcher status
+        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok' && steps.rebase.outputs.rebase_failed != 'true'
         env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
           CONSUMER_REPO: ${{ inputs.consumer_repo }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_BRANCH: ${{ inputs.pr_branch }}
@@ -245,3 +308,19 @@ Diagnostics:
           echo "  PR: ${CONSUMER_REPO}#${PR_NUMBER}"
           echo "  Branch: ${PR_BRANCH} rebased onto origin/${BASE_BRANCH}"
           echo "  A pull_request[synchronize] event will trigger the reviewer workflow downstream."
+
+          # Upsert watcher-status comment
+          MARKER="<!-- riddim:watcher-status -->"
+          TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          BODY="${MARKER}
+**Last watcher run:** ${TIMESTAMP}
+**State:** rebased
+**Action:** pushed fast-forward rebase onto ${BASE_BRANCH}"
+          existing_id="$(gh api "repos/${CONSUMER_REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null | tail -n 1 || true)"
+          if [[ -n "$existing_id" ]]; then
+            gh api --method PATCH "/repos/${CONSUMER_REPO}/issues/comments/${existing_id}" \
+              --field "body=${BODY}" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$BODY" >/dev/null 2>&1 || true
+          fi

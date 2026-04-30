@@ -183,9 +183,37 @@ jobs:
 
       - name: Stop when guard blocks
         if: ${{ steps.guard.outputs.decision != 'ok' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || secrets.DEV_BOT_PAT || github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          DECISION: ${{ steps.guard.outputs.decision }}
+          REASON_JSON: ${{ steps.guard.outputs.reason_json }}
         run: |
-          echo "Rebase guard decision: ${{ steps.guard.outputs.decision }}"
-          echo '${{ steps.guard.outputs.reason_json }}'
+          set -euo pipefail
+          echo "Rebase guard decision: ${DECISION}"
+          echo "${REASON_JSON}"
+
+          # Apply agent:needs-human for all guard-block outcomes
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --add-label "agent:needs-human" >/dev/null 2>&1 || true
+
+          # Post or update the fixed-marker status comment
+          MARKER="<!-- riddim:watcher-status -->"
+          TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          REASON_TEXT="$(echo "${REASON_JSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason",""))' 2>/dev/null || echo "${DECISION}")"
+          BODY="${MARKER}
+**Last watcher run:** ${TIMESTAMP}
+**State:** guard-blocked
+**Action:** agent:needs-human applied (${DECISION}: ${REASON_TEXT})"
+          existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null | tail -n 1 || true)"
+          if [[ -n \"$existing_id\" ]]; then
+            gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" \
+              --field "body=${BODY}" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY" >/dev/null 2>&1 || true
+          fi
+
           git rebase --abort >/dev/null 2>&1 || true
 
       - name: Extract conflict context
@@ -306,6 +334,22 @@ jobs:
         run: |
           set -euo pipefail
           git push --force-with-lease origin "HEAD:${HEAD_REF}"
+
+      - name: Update watcher status after rebase
+        if: ${{ steps.guard.outputs.decision == 'ok' && !inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || secrets.DEV_BOT_PAT || github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MECHANICAL_STATE: ${{ steps.mechanical.outputs.state }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          bash .github/scripts/update-watcher-status.sh \
+            "$OWNER" "$REPO" "$PR_NUMBER" \
+            "rebased-${MECHANICAL_STATE}" \
+            "pushed rebase onto ${BASE_BRANCH} (${MECHANICAL_STATE})"
 
       - name: Self-test summary
         if: ${{ inputs.self_test_mode }}
