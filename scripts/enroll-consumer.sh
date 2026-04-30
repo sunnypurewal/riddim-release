@@ -212,21 +212,24 @@ fi
 
 # Check if an enrollment PR is already open or merged
 if [[ "$DRY_RUN" != "true" ]]; then
-  existing_pr="$(gh pr list --repo "$REPO" \
+  open_pr="$(gh pr list --repo "$REPO" \
     --search "head:${BRANCH_NAME}" \
-    --state all \
-    --json number,state \
-    --jq '.[0] | "\(.state):\(.number)"' 2>/dev/null || true)"
+    --state open \
+    --json number \
+    --jq '.[0].number // empty' 2>/dev/null || true)"
 
-  if [[ -n "$existing_pr" ]]; then
-    state="${existing_pr%%:*}"
-    number="${existing_pr##*:}"
-    if [[ "$state" == "MERGED" ]]; then
-      skip "Enrollment PR #${number} already merged — skipping trigger-wrapper step."
-    else
-      skip "Enrollment PR #${number} already open (state: ${state}) — skipping."
-    fi
+  merged_pr="$(gh pr list --repo "$REPO" \
+    --search "head:${BRANCH_NAME}" \
+    --state merged \
+    --json number \
+    --jq '.[0].number // empty' 2>/dev/null || true)"
+
+  if [[ -n "$open_pr" ]]; then
+    skip "Enrollment PR #${open_pr} already open — skipping."
     # Continue to remaining steps even if PR exists
+    SKIP_PR=true
+  elif [[ -n "$merged_pr" ]]; then
+    skip "Enrollment PR #${merged_pr} already merged — skipping trigger-wrapper step."
     SKIP_PR=true
   else
     SKIP_PR=false
@@ -275,17 +278,24 @@ CODEOWNERS
     DEFAULT_BRANCH="main"
   fi
 
-  # Create the branch
-  MAIN_SHA="$(capture gh api "/repos/${REPO}/git/refs/heads/${DEFAULT_BRANCH}" --jq .object.sha)"
+  # Create the branch, or reuse it if it already exists from a prior run
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "[dry-run] gh api --method POST /repos/${REPO}/git/refs --field ref=refs/heads/${BRANCH_NAME} --field sha=<main-sha>"
+  else
+    if gh api "/repos/${REPO}/git/ref/heads/${BRANCH_NAME}" >/dev/null 2>&1; then
+      skip "Setup branch ${BRANCH_NAME} already exists in ${REPO}."
+    else
+      MAIN_SHA="$(capture gh api "/repos/${REPO}/git/refs/heads/${DEFAULT_BRANCH}" --jq .object.sha)"
+      run gh api \
+        --method POST \
+        "/repos/${REPO}/git/refs" \
+        --field "ref=refs/heads/${BRANCH_NAME}" \
+        --field "sha=${MAIN_SHA}"
+    fi
+  fi
 
+  # Push agent-loop.yml
   if [[ "$DRY_RUN" != "true" ]]; then
-    run gh api \
-      --method POST \
-      "/repos/${REPO}/git/refs" \
-      --field "ref=refs/heads/${BRANCH_NAME}" \
-      --field "sha=${MAIN_SHA}"
-
-    # Push agent-loop.yml
     run gh api \
       --method PUT \
       "/repos/${REPO}/contents/.github/workflows/agent-loop.yml" \
@@ -333,7 +343,6 @@ EOF
       --head "$BRANCH_NAME" 2>&1)"
     ok "Enrollment PR opened: ${PR_URL}"
   else
-    echo "[dry-run] gh api --method POST /repos/${REPO}/git/refs --field ref=refs/heads/${BRANCH_NAME} --field sha=<main-sha>"
     echo "[dry-run] gh api --method PUT /repos/${REPO}/contents/.github/workflows/agent-loop.yml --field message=... --field content=<base64> --field branch=${BRANCH_NAME}"
     echo "[dry-run] gh api --method PUT /repos/${REPO}/contents/CODEOWNERS --field message=... --field content=<base64> --field branch=${BRANCH_NAME}"
     echo "[dry-run] gh pr create --repo ${REPO} --title 'chore: enroll autonomous PR agent loop' --base ${DEFAULT_BRANCH} --head ${BRANCH_NAME}"
@@ -362,11 +371,19 @@ if [[ "$DRY_RUN" != "true" ]]; then
     new_checks="$(echo "$existing_checks" \
       | python3 -c "import json,sys; checks=json.load(sys.stdin); checks.append('reviewer-agent-passed'); print(json.dumps(checks))")"
 
+    readarray -t check_fields < <(printf '%s' "$new_checks" \
+      | python3 -c "import json,sys; print(*json.load(sys.stdin), sep='\\n')")
+
+    args=()
+    for check in "${check_fields[@]}"; do
+      args+=(--field "contexts[]=${check}")
+    done
+
     run gh api \
       --method PATCH \
       "/repos/${REPO}/branches/main/protection/required_status_checks" \
       --field "strict=true" \
-      --field "contexts=${new_checks}"
+      "${args[@]}"
     ok "reviewer-agent-passed added to required checks on ${REPO}/main"
   fi
 else
