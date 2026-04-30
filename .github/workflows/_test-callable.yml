@@ -1,0 +1,8 @@
+name: Test callable stub
+on:
+  workflow_call:
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "reusable workflow call succeeded"
