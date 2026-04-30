@@ -188,9 +188,9 @@ jobs:
           if [[ -n "$MOCK_LABELS" ]]; then
             labels="$(printf '%s' "$MOCK_LABELS" | tr ',' '\n')"
           elif [[ "$target_type" == "issue" ]]; then
-            labels="$(gh issue view "$target_number" --json labels --jq '.labels[].name')"
+            labels="$(gh issue view "$target_number" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
           else
-            labels="$(gh pr view "$target_number" --json labels --jq '.labels[].name')"
+            labels="$(gh pr view "$target_number" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
           fi
 
           pause_label=""
