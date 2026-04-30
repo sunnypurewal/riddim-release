@@ -1,0 +1,514 @@
+# ============================================================================
+# developer.yml — Reusable autonomous developer-agent workflow
+# RiddimSoftware/riddim-release
+#
+# SHARED INFRASTRUCTURE — HIGH BLAST RADIUS
+# All consumers pinned to @main run this file. Validate changes with the
+# workflow_dispatch self-test path BEFORE merging. See docs/agent-loop/README.md.
+#
+# USAGE IN A CONSUMER REPO:
+#
+#   on:
+#     issues:
+#       types: [labeled]
+#     pull_request_review:
+#       types: [submitted]
+#
+#   jobs:
+#     developer:
+#       # Initial build: issue labeled agent:build
+#       if: >
+#         (github.event_name == 'issues' &&
+#          github.event.label.name == 'agent:build' &&
+#          !contains(github.event.issue.labels.*.name, 'agent:pause')) ||
+#         (github.event_name == 'pull_request_review' &&
+#          github.event.review.state == 'changes_requested' &&
+#          github.event.review.user.login == 'reviewer-bot[bot]' &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:needs-human') &&
+#          !contains(github.event.pull_request.labels.*.name, 'agent:attempt-3'))
+#       uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
+#       secrets:
+#         claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#         dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+#       with:
+#         trigger_type: ${{ github.event_name == 'issues' && 'issue_labeled' || 'changes_requested' }}
+#         issue_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+#         issue_body: ${{ github.event.issue.body || '' }}
+#         pr_number: ${{ github.event.pull_request.number || 0 }}
+#
+# SECRETS REQUIRED (org-level, selected-repo access):
+#   CLAUDE_CODE_OAUTH_TOKEN — Max-plan OAuth token (via `claude setup-token`)
+#   DEV_BOT_PAT             — developer-bot installation token or fine-grained PAT
+#
+# FALLBACK: If claude-code-action@v1 stops accepting claude_code_oauth_token,
+# pass ANTHROPIC_API_KEY instead:
+#   with:
+#     anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+# ============================================================================
+
+name: Developer Agent (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      trigger_type:
+        description: "'issue_labeled' for initial build, 'changes_requested' for fix-up"
+        required: true
+        type: string
+
+      issue_number:
+        description: "Issue number (initial build) or PR number (fix-up)"
+        required: true
+        type: number
+
+      issue_body:
+        description: "Issue body text (initial build only)"
+        required: false
+        type: string
+        default: ""
+
+      pr_number:
+        description: "PR number for fix-up cycle (0 if initial build)"
+        required: false
+        type: number
+        default: 0
+
+      review_comments:
+        description: "Synthetic or caller-provided review comments for fix-up self-tests"
+        required: false
+        type: string
+        default: ""
+
+      prompt_override:
+        description: "Optional: fully override the agent prompt (advanced use only)"
+        required: false
+        type: string
+        default: ""
+
+      mock_labels:
+        description: "Self-test only: comma/newline-separated labels that bypass gh label lookup."
+        required: false
+        type: string
+        default: ""
+
+      max_diff_lines:
+        description: "Max changed lines before guard blocks the run (default 500)"
+        required: false
+        type: number
+        default: 500
+
+      self_test_mode:
+        description: "riddim-release self-test only: create deterministic artifacts without invoking Claude"
+        required: false
+        type: boolean
+        default: false
+
+      self_test_branch:
+        description: "riddim-release self-test only: branch to create or update"
+        required: false
+        type: string
+        default: ""
+
+    secrets:
+      claude_code_oauth_token:
+        required: true
+      dev_bot_pat:
+        required: true
+
+# One developer run per issue/PR at a time. Cancel stale runs on new pushes.
+concurrency:
+  group: developer-${{ github.repository }}-${{ inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  run-developer-agent:
+    name: Developer Agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.dev_bot_pat }}
+          fetch-depth: 0
+
+      - name: Check automation pause labels
+        id: pause-guard
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MOCK_LABELS: ${{ inputs.mock_labels }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$TRIGGER_TYPE" in
+            issue_labeled)
+              target_type="issue"
+              target_number="$ISSUE_NUMBER"
+              ;;
+            changes_requested)
+              target_type="pr"
+              target_number="$PR_NUMBER"
+              ;;
+            *)
+              {
+                echo "skip=false"
+                echo "target_type=unknown"
+                echo "target_number=$PR_NUMBER"
+                echo "pause_label="
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [[ -z "$target_number" || "$target_number" == "0" ]]; then
+            echo "::error::${target_type}_number is required for ${TRIGGER_TYPE}."
+            exit 1
+          fi
+
+          if [[ -n "$MOCK_LABELS" ]]; then
+            labels="$(printf '%s' "$MOCK_LABELS" | tr ',' '\n')"
+          elif [[ "$target_type" == "issue" ]]; then
+            labels="$(gh issue view "$target_number" --json labels --jq '.labels[].name')"
+          else
+            labels="$(gh pr view "$target_number" --json labels --jq '.labels[].name')"
+          fi
+
+          pause_label=""
+          while IFS= read -r label; do
+            case "$label" in
+              agent:pause|agent:needs-human)
+                pause_label="$label"
+                break
+                ;;
+            esac
+          done <<< "$labels"
+
+          {
+            echo "target_type=$target_type"
+            echo "target_number=$target_number"
+            echo "skip=false"
+            echo "pause_label=$pause_label"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ -n "$pause_label" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping developer workflow: $pause_label present on ${target_type} #${target_number}."
+            echo "::notice::Developer automation skipped due to ${pause_label} on ${target_type} #${target_number}."
+          fi
+
+          if [[ -z "$pause_label" ]]; then
+            echo "No pause labels present on ${target_type} #${target_number}; continuing."
+          fi
+
+      # ── Safety guard ──────────────────────────────────────────────────────
+      - name: Run safety guard
+        if: ${{ inputs.trigger_type == 'changes_requested' && steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/RiddimSoftware/riddim-release/main/.github/scripts/guard.sh \
+            -o /tmp/guard.sh
+          chmod +x /tmp/guard.sh
+          /tmp/guard.sh "${{ inputs.pr_number }}"
+
+      - name: Capture PR head before fix-up
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true'
+        id: pr_head_before
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          head_ref_oid="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)"
+          echo "head_ref_oid=$head_ref_oid" >> "$GITHUB_OUTPUT"
+
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.dev_bot_pat }}
+          fetch-depth: 0
+
+      # -- Attempt counter ---------------------------------------------------
+      - name: Increment attempt label
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
+
+      # ── Deterministic self-test path ──────────────────────────────────────
+      - name: Exercise workflow in self-test mode
+        id: self-test
+        if: ${{ inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SELF_TEST_BRANCH: ${{ inputs.self_test_branch }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+
+          branch="${SELF_TEST_BRANCH:-selftest/${RUN_ID}}"
+          mkdir -p smoke-test
+
+          if [[ "${ACT:-false}" == "true" ]]; then
+            if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+              cat > smoke-test/developer-self-test.md <<EOF
+          # Developer Agent Self Test
+          Trigger: issue_labeled
+          Issue: ${ISSUE_NUMBER}
+          Run: ${RUN_ID}
+
+          ${ISSUE_BODY}
+          EOF
+              echo "artifact_kind=local-pr" >> "$GITHUB_OUTPUT"
+            elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+              cat > smoke-test/developer-self-test-fixup.md <<EOF
+          # Developer Agent Self Test Fix-up
+          Trigger: changes_requested
+          PR: ${PR_NUMBER}
+          Run: ${RUN_ID}
+          EOF
+              echo "artifact_kind=local-commit" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::trigger_type must be issue_labeled or changes_requested."
+              exit 1
+            fi
+            echo "artifact_ref=$branch" >> "$GITHUB_OUTPUT"
+            echo "ACT=true; created local self-test artifact and skipped git/gh network actions."
+            exit 0
+          fi
+
+          git config user.name "riddim-dev-self-test"
+          git config user.email "riddim-dev-self-test@users.noreply.github.com"
+          git checkout -B "$branch"
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            cat > smoke-test/developer-self-test.md <<EOF
+          # Developer Agent Self Test
+          Trigger: issue_labeled
+          Issue: ${ISSUE_NUMBER}
+          Run: ${RUN_ID}
+
+          ${ISSUE_BODY}
+          EOF
+
+            git add smoke-test/developer-self-test.md
+            git commit -m "test: developer self-test issue path ${RUN_ID}"
+
+            git push --force-with-lease origin "$branch"
+
+            pr_url="$(gh pr create \
+              --repo "$REPO" \
+              --base main \
+              --head "$branch" \
+              --title "chore: developer self-test run ${RUN_ID}" \
+              --body "Synthetic developer workflow self-test for run ${RUN_ID}." \
+              --draft)"
+            echo "artifact_kind=pr" >> "$GITHUB_OUTPUT"
+            echo "artifact_ref=$pr_url" >> "$GITHUB_OUTPUT"
+            echo "Created self-test PR: $pr_url"
+          elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+            cat > smoke-test/developer-self-test-fixup.md <<EOF
+          # Developer Agent Self Test Fix-up
+          Trigger: changes_requested
+          PR: ${PR_NUMBER}
+          Run: ${RUN_ID}
+          EOF
+
+            git add smoke-test/developer-self-test-fixup.md
+            git commit -m "test: developer self-test fixup path ${RUN_ID}"
+
+            git push --force-with-lease origin "$branch"
+
+            echo "artifact_kind=commit" >> "$GITHUB_OUTPUT"
+            echo "artifact_ref=$branch" >> "$GITHUB_OUTPUT"
+            echo "Created self-test fix-up commit on $branch"
+          else
+            echo "::error::trigger_type must be issue_labeled or changes_requested."
+            exit 1
+          fi
+
+      - name: Stop after self-test mode
+        if: ${{ inputs.self_test_mode }}
+        run: |
+          echo "Self-test mode completed; skipping Claude invocation."
+
+      - name: Assert self-test artifact in reusable workflow
+        if: ${{ inputs.self_test_mode }}
+        env:
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            test -s smoke-test/developer-self-test.md
+          elif [[ "$TRIGGER_TYPE" == "changes_requested" ]]; then
+            test -s smoke-test/developer-self-test-fixup.md
+          else
+            echo "::error::trigger_type must be issue_labeled or changes_requested."
+            exit 1
+          fi
+
+      - name: Upload self-test artifact
+        if: ${{ inputs.self_test_mode && env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: developer-self-test-${{ github.run_id }}
+          path: smoke-test/
+          if-no-files-found: error
+
+      # ── Assemble prompt ───────────────────────────────────────────────────
+      - name: Assemble agent prompt
+        id: prompt
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
+        env:
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            {
+              echo "prompt<<PROMPT_EOF"
+              echo "$PROMPT_OVERRIDE"
+              echo "PROMPT_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
+            # ── Initial build prompt ─────────────────────────────────────────
+            ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title -q '.title')
+
+            cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
+          prompt<<PROMPT_DELIMITER
+          You are an autonomous developer agent. Your task is to implement the GitHub issue below.
+
+          Repository: $REPO
+          Issue #$ISSUE_NUMBER: $ISSUE_TITLE
+
+          Issue body:
+          $ISSUE_BODY
+
+          Instructions:
+          1. Create a new branch named: agent/issue-$ISSUE_NUMBER
+          2. Implement the feature or fix described in the issue. Write clean, idiomatic code.
+          3. Run the project's tests if any exist (check Makefile, package.json, etc.).
+          4. Stage all changes and commit with message: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
+          5. Push the branch to origin.
+          6. Open a pull request against main with:
+             - Title: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
+             - Body: describe what was changed and why, reference "Closes #$ISSUE_NUMBER"
+          7. Add the labels 'agent:build' and 'agent:attempt-1' to the PR.
+          8. Enable auto-merge: gh pr merge --auto --squash <PR-NUMBER> --repo $REPO
+
+          Important: Stay within the scope of the issue. Do not refactor unrelated code.
+          PROMPT_DELIMITER
+          PROMPT_EOF
+
+          else
+            # ── Fix-up prompt ────────────────────────────────────────────────
+            PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body')
+            REVIEW_COMMENTS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json reviews \
+              --jq '[.reviews[] | select(.state == "CHANGES_REQUESTED")] | last | .body')
+            INLINE_COMMENTS=$(gh api \
+              "repos/$REPO/pulls/$PR_NUMBER/comments" \
+              --jq '[.[] | {path:.path, line:.line, body:.body}] | .[:20] | map("File: \(.path) line \(.line)\n\(.body)") | join("\n\n")' 2>/dev/null || echo "")
+
+            cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
+          prompt<<PROMPT_DELIMITER
+          You are an autonomous developer agent. Your task is to address review feedback on a pull request.
+
+          Repository: $REPO
+          PR #$PR_NUMBER
+
+          Review comment requiring changes:
+          $REVIEW_COMMENTS
+
+          Inline comments (up to 20):
+          $INLINE_COMMENTS
+
+          Original PR description:
+          $PR_BODY
+
+          Instructions:
+          1. Check out the PR branch: gh pr checkout $PR_NUMBER --repo $REPO
+          2. Address ALL review comments and inline comments. Explain any you disagree with in PR comments.
+          3. Run the project's tests if any exist.
+          4. Commit changes with: "fix: address review feedback on PR #$PR_NUMBER"
+          5. Push to the same branch.
+          6. Do NOT re-request review — the reviewer workflow handles that.
+
+          Important: Only fix what was raised in the review. Scope creep will cause another rejection.
+          PROMPT_DELIMITER
+          PROMPT_EOF
+          fi
+
+      # ── Run Claude Code agent ─────────────────────────────────────────────
+      - name: Run developer agent
+        if: ${{ steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
+        uses: anthropics/claude-code-action@v1
+        timeout-minutes: 25
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
+
+      # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
+      - name: Enable auto-merge on PR
+        if: ${{ !inputs.self_test_mode && env.ACT != 'true' && steps.pause-guard.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_BEFORE: ${{ steps.pr_head_before.outputs.head_ref_oid }}
+          CLAUDE_BRANCH_NAME: ""
+        run: |
+          bash .github/scripts/enable-auto-merge.sh
+
+      - name: Skip auto-merge during local act smoke tests
+        if: ${{ !inputs.self_test_mode && env.ACT == 'true' && steps.pause-guard.outputs.skip != 'true' }}
+        run: |
+          echo "Skipping gh pr merge --auto --squash because ACT=true local smoke test."
+
+      - name: Ensure initial attempt label
+        if: ${{ !inputs.self_test_mode && inputs.trigger_type == 'issue_labeled' && steps.pause-guard.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          pr_number="$(gh pr view "agent/issue-${ISSUE_NUMBER}" --repo "$REPO" --json number --jq '.number')"
+          bash .github/scripts/update_attempt_label.sh initial "$pr_number"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Self-test: validates the workflow runs without error on a synthetic input.
+  # Triggered only from riddim-release via workflow_dispatch (not consumed
+  # by external callers).
+  # ──────────────────────────────────────────────────────────────────────────
+
+# NOTE: The self-test is a separate top-level workflow in this repo:
+#   .github/workflows/developer-self-test.yml
+# It uses `workflow_dispatch` and calls this reusable workflow with a
+# synthetic issue body against riddim-release itself.
+# See developer-self-test.yml for details.

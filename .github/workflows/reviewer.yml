@@ -1,0 +1,347 @@
+# Shared infrastructure - high blast radius.
+#
+# Consumer repositories should call this reusable workflow from a pull_request
+# trigger equivalent to:
+#
+# on:
+#   pull_request:
+#     types: [opened, synchronize, ready_for_review]
+#
+# jobs:
+#   reviewer:
+#     if: >-
+#       github.event.pull_request.user.login == 'developer-bot' &&
+#       github.event.sender.login != 'reviewer-bot' &&
+#       !contains(github.event.pull_request.labels.*.name, 'agent:pause')
+#     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+#     with:
+#       pr_number: ${{ github.event.pull_request.number }}
+#     secrets:
+#       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#       REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+#
+# Constants shared with developer.yml consumers:
+# - Developer bot login: developer-bot
+# - Reviewer bot login: reviewer-bot
+# - Pause label: agent:pause
+# - Human-review label: agent:needs-human
+# - Required status check: reviewer-agent-passed
+
+name: Reviewer Agent
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Caller repository pull request number to review.
+        required: true
+        type: string
+      mock_reviewer_verdict:
+        description: "Optional self-test verdict: approve or request-changes."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: OAuth token used by claude-code-action in later wiring.
+        required: true
+      REVIEWER_BOT_PAT:
+        description: Reviewer bot token used for PR comments/reviews in later wiring.
+        required: true
+
+env:
+  DEVELOPER_BOT_LOGIN: developer-bot
+  REVIEWER_BOT_LOGIN: reviewer-bot
+  PAUSE_LABEL: agent:pause
+  NEEDS_HUMAN_LABEL: agent:needs-human
+  REVIEWER_STATUS_CHECK: reviewer-agent-passed
+
+concurrency:
+  group: reviewer-agent-pr-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  reviewer-stub:
+    name: Reviewer agent
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout local workspace for act
+        if: ${{ env.ACT == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Checkout riddim-release guard scripts
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ github.workflow_sha }}
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      - name: Print reusable workflow inputs
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
+        run: |
+          echo "reviewer workflow skeleton"
+          echo "pr_number=${PR_NUMBER}"
+          echo "status_check=${REVIEWER_STATUS_CHECK}"
+          echo "mock_reviewer_verdict=${MOCK_REVIEWER_VERDICT}"
+          echo "developer_bot=${DEVELOPER_BOT_LOGIN}"
+          echo "reviewer_bot=${REVIEWER_BOT_LOGIN}"
+          echo "pause_label=${PAUSE_LABEL}"
+          echo "needs_human_label=${NEEDS_HUMAN_LABEL}"
+
+      - name: Resolve caller PR head SHA
+        id: pr_metadata
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          if [[ "${ACT:-}" == "true" ]]; then
+            head_sha="${GITHUB_SHA}"
+          else
+            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json headRefOid --jq .headRefOid)"
+          fi
+
+          if [[ -z "${head_sha}" || "${head_sha}" == "null" ]]; then
+            echo "Unable to resolve head SHA for PR #${PR_NUMBER}" >&2
+            exit 1
+          fi
+
+          echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved PR #${PR_NUMBER} head SHA: ${head_sha}"
+
+      - name: Run reviewer guard
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set +e
+          if [[ "${ACT:-}" == "true" && -n "${MOCK_REVIEWER_VERDICT}" ]]; then
+            output="act mock: guard pass"
+            status=0
+          else
+            output="$(bash .github/scripts/guard.sh "${PR_NUMBER}" 2>&1)"
+            status=$?
+          fi
+          set -e
+
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "output<<EOF"
+            echo "${output}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "${output}"
+          echo "guard_exit_code=${status}"
+
+      - name: Mark PR for human review when guard blocks
+        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          GUARD_OUTPUT: ${{ steps.guard.outputs.output }}
+        run: |
+          comment_body="$(mktemp)"
+          {
+            echo "Reviewer guard blocked autonomous review for PR #${PR_NUMBER}."
+            echo
+            echo "Guard output:"
+            echo '```'
+            echo "${GUARD_OUTPUT}"
+            echo '```'
+          } > "${comment_body}"
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: gh pr edit ${PR_NUMBER} --add-label ${NEEDS_HUMAN_LABEL}"
+            echo "act dry-run: gh pr comment ${PR_NUMBER} --body-file ${comment_body}"
+          else
+            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label "${NEEDS_HUMAN_LABEL}"
+            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file "${comment_body}"
+          fi
+
+          echo "Guard blocked autonomous review; skipping reviewer agent."
+
+      - name: Emit reviewer-agent-passed failure when guard blocks
+        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          GUARD_OUTPUT: ${{ steps.guard.outputs.output }}
+        run: |
+          summary="$(mktemp)"
+          {
+            echo "Reviewer guard blocked autonomous review for PR #${PR_NUMBER}."
+            echo
+            echo "Guard output:"
+            echo '```'
+            echo "${GUARD_OUTPUT}"
+            echo '```'
+          } > "${summary}"
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: create check-run ${REVIEWER_STATUS_CHECK} on ${PR_HEAD_SHA} with conclusion=failure"
+            cat "${summary}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
+              -f "name=${REVIEWER_STATUS_CHECK}" \
+              -f "head_sha=${PR_HEAD_SHA}" \
+              -f "status=completed" \
+              -f "conclusion=failure" \
+              -f "details_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              -f "output[title]=Reviewer guard blocked autonomous review" \
+              -f "output[summary]=$(cat "${summary}")" > /dev/null
+          fi
+
+          exit 1
+
+      - name: Checkout caller PR workspace
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ inputs.pr_number }}/merge
+          path: consumer
+          token: ${{ secrets.REVIEWER_BOT_PAT }}
+
+      - name: Load reviewer prompt
+        if: ${{ steps.guard.outputs.exit_code == '0' }}
+        id: reviewer_prompt
+        run: |
+          {
+            echo "prompt<<EOF"
+            cat .github/prompts/reviewer-verdict.md
+            echo
+            echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
+            echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+
+      - name: Validate reviewer prompt for act
+        if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
+        env:
+          REVIEWER_PROMPT: ${{ steps.reviewer_prompt.outputs.prompt }}
+        run: |
+          for required in \
+            "gh pr review" \
+            "--approve" \
+            "--request-changes" \
+            "git commit" \
+            "git push" \
+            "consumer/CLAUDE.md" \
+            "consumer/AGENTS.md"; do
+            if ! grep -F -- "${required}" <<< "${REVIEWER_PROMPT}" > /dev/null; then
+              echo "Reviewer prompt is missing required text: ${required}" >&2
+              exit 1
+            fi
+          done
+
+          echo "Reviewer prompt loaded and contains required verdict instructions."
+
+      - name: Run reviewer agent
+        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEWER_STATUS_CHECK: ${{ env.REVIEWER_STATUS_CHECK }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
+          prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
+
+      - name: Resolve reviewer verdict
+        if: ${{ always() && steps.guard.outputs.exit_code == '0' }}
+        id: reviewer_verdict
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
+        run: |
+          case "${MOCK_REVIEWER_VERDICT}" in
+            approve)
+              verdict="APPROVED"
+              ;;
+            request-changes)
+              verdict="CHANGES_REQUESTED"
+              ;;
+            "")
+              if [[ "${ACT:-}" == "true" ]]; then
+                echo "Set mock_reviewer_verdict to approve or request-changes when running this path under act." >&2
+                verdict="NO_VERDICT"
+              else
+                latest_verdict=""
+                while IFS= read -r verdict_state; do
+                  latest_verdict="${verdict_state}"
+                done < <(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
+                  --paginate \
+                  --jq ".[] | select(.user.login == \"${REVIEWER_BOT_LOGIN}\" and .commit_id == \"${PR_HEAD_SHA}\") | .state")
+
+                if [[ -z "${latest_verdict}" ]]; then
+                  verdict="NO_VERDICT"
+                else
+                  verdict="${latest_verdict}"
+                fi
+              fi
+              ;;
+            *)
+              echo "Unsupported mock_reviewer_verdict: ${MOCK_REVIEWER_VERDICT}" >&2
+              verdict="NO_VERDICT"
+              ;;
+          esac
+
+          if [[ "${verdict}" != "APPROVED" && "${verdict}" != "CHANGES_REQUESTED" ]]; then
+            echo "Reviewer did not produce an approve/request-changes verdict; got: ${verdict:-<empty>}" >&2
+            verdict="NO_VERDICT"
+          fi
+
+          echo "verdict=${verdict}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved reviewer verdict: ${verdict}"
+
+      - name: Emit reviewer-agent-passed status check
+        if: ${{ always() && steps.guard.outputs.exit_code == '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          VERDICT: ${{ steps.reviewer_verdict.outputs.verdict }}
+        run: |
+          conclusion="failure"
+          title="Reviewer requested changes"
+          summary="Reviewer verdict for PR #${PR_NUMBER}: ${VERDICT}."
+
+          if [[ "${VERDICT}" == "APPROVED" ]]; then
+            conclusion="success"
+            title="Reviewer approved the pull request"
+          fi
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: create check-run ${REVIEWER_STATUS_CHECK} on ${PR_HEAD_SHA} with conclusion=${conclusion}"
+            echo "${summary}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
+              -f "name=${REVIEWER_STATUS_CHECK}" \
+              -f "head_sha=${PR_HEAD_SHA}" \
+              -f "status=completed" \
+              -f "conclusion=${conclusion}" \
+              -f "details_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              -f "output[title]=${title}" \
+              -f "output[summary]=${summary}" > /dev/null
+          fi
+
+          if [[ "${conclusion}" != "success" ]]; then
+            exit 1
+          fi
