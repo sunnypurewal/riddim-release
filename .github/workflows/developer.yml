@@ -262,12 +262,13 @@ jobs:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REPO: ${{ github.repository }}
-          GUARD_MAX_ATTEMPTS: ${{ inputs.max_attempts }}
+          AGENT_ATTEMPT_CAP: ${{ inputs.max_attempts }}
+          AGENT_FALLBACK_OWNER: sunnypurewal
         run: |
           set -euo pipefail
 
           labels="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name')"
-          cap="${GUARD_MAX_ATTEMPTS:-3}"
+          cap="${AGENT_ATTEMPT_CAP:-3}"
           cap_hit=false
           current_attempt=0
           if ! [[ "$cap" =~ ^[0-9]+$ ]]; then
@@ -297,18 +298,58 @@ jobs:
 
           if [[ "$cap_hit" == "true" ]]; then
             echo "::warning::Attempt cap hit (attempt ${current_attempt} >= cap ${cap}). Escalating to human review."
-            # Apply needs-human label
+            # 1. Add agent:needs-human label
             gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "agent:needs-human" || true
-            # Disable auto-merge
-            gh pr merge "$PR_NUMBER" --repo "$REPO" --disable-auto || true
-            # Post escalation comment
+            # 2. Disable auto-merge
+            gh pr merge "$PR_NUMBER" --repo "$REPO" --disable-auto 2>/dev/null || true
+
+            # 3. Resolve owner from CODEOWNERS, fall back to configured handle
+            owner="${AGENT_FALLBACK_OWNER:-sunnypurewal}"
+            candidates=(".github/CODEOWNERS" "CODEOWNERS" "docs/CODEOWNERS")
+            while IFS= read -r candidate; do
+              [[ -z "$candidate" ]] && continue
+              codeowners_content="$(gh api "repos/${REPO}/contents/${candidate}" --jq '.content' 2>/dev/null || true)"
+              if [[ -z "$codeowners_content" ]]; then
+                continue
+              fi
+              codeowner="$(printf '%s' "$codeowners_content" | base64 -d 2>/dev/null | awk '
+                /^[[:space:]]*#/ {next}
+                NF == 0 {next}
+                {
+                  gsub(/#.*/, "", $0)
+                  for (i = 1; i <= NF; i++) {
+                    if ($(i) ~ /^@[^[:space:]]+$/) {
+                      gsub(/^@/, "", $(i))
+                      print $(i)
+                      exit 0
+                    }
+                  }
+                }
+              ' | head -n1)"
+              if [[ -n "$codeowner" ]]; then
+                owner="$codeowner"
+                break
+              fi
+            done <<< "${candidates[*]}"
+
+            # 4. Capture last reviewer feedback summary
+            last_review="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json reviews \
+              --jq '[.reviews[] | select(.state == "CHANGES_REQUESTED")] | last | .body // "(no review body)"' \
+              2>/dev/null || echo "(unavailable)")"
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null || echo "unknown")"
+
+            # 5. Post escalation comment
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "**Agent attempt cap reached (attempt ${current_attempt}/${cap}).**
 
-Automated fix-up cycles have been exhausted. This PR requires human review before automation can resume.
+Automated fix-up cycles have been exhausted. Auto-merge has been disabled.
 
-@SunnyPurewal — please review the outstanding feedback and either resolve it manually or remove the \`agent:needs-human\` label once the PR is ready for another automated pass.
+@${owner} — please review the outstanding feedback and either resolve it manually or remove the \`agent:needs-human\` label once the PR is ready for another automated pass.
 
-Auto-merge has been disabled." || true
+**Summary:**
+- Attempts made: ${current_attempt}/${cap}
+- Last commit: ${head_sha}
+- Last reviewer feedback: ${last_review}
+- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
           fi
 
       # ── Deterministic self-test path ──────────────────────────────────────
