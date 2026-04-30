@@ -61,10 +61,11 @@ jobs:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
 
-          branch="selftest/rev-${RUN_ID}"
+          branch="selftest/rev-${RUN_ID}-${RUN_ATTEMPT}"
           git config user.email "reviewer-bot@riddimsoftware.com"
           git config user.name "reviewer-bot"
           git checkout -b "${branch}"
@@ -91,7 +92,7 @@ jobs:
   invoke-reviewer:
     name: Invoke reviewer.yml with mock verdict
     needs: setup
-    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+    uses: ./.github/workflows/reviewer.yml
     with:
       pr_number: ${{ needs.setup.outputs.pr_number }}
       mock_reviewer_verdict: ${{ inputs.expected_verdict }}
