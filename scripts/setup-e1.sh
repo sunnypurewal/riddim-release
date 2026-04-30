@@ -22,9 +22,17 @@
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-false}"
-STEP="${1:-all}"
+STEP="all"
 ORG="RiddimSoftware"
 REPOS=("riddim-release" "epac")
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true; shift ;;
+    --step)    STEP="${2:?'--step requires an argument'}"; shift 2 ;;
+    *)         STEP="$1"; shift ;;
+  esac
+done
 
 run() {
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -67,7 +75,7 @@ step_labels() {
         --description "$desc" \
         --repo "$ORG/$repo" \
         --force
-      echo "    [ok] $label"
+      run echo "    [ok] $label"
     done
   done
 }
@@ -76,7 +84,7 @@ step_labels() {
 step_check_policy() {
   log "Checking org Actions permissions for cross-repo reusable workflow access"
 
-  result=$(gh api "orgs/$ORG/actions/permissions" 2>&1) || {
+  result=$(run gh api "orgs/$ORG/actions/permissions" 2>&1) || {
     warn "Could not read org Actions permissions — ensure you have org-admin scope"
     echo "$result"
     exit 1
