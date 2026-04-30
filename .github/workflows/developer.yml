@@ -117,6 +117,17 @@ jobs:
           chmod +x /tmp/guard.sh
           /tmp/guard.sh "${{ inputs.pr_number }}"
 
+      - name: Capture PR head before fix-up
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        id: pr_head_before
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          head_ref_oid="$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)"
+          echo "head_ref_oid=$head_ref_oid" >> "$GITHUB_OUTPUT"
+
       # ── Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -231,13 +242,22 @@ jobs:
           prompt: ${{ steps.prompt.outputs.prompt }}
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
-      - name: Enable auto-merge on PR (fix-up path)
-        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+      - name: Enable auto-merge on PR
+        if: env.ACT != 'true'
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
-          REPO: ${{ github.repository }}
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_BEFORE: ${{ steps.pr_head_before.outputs.head_ref_oid }}
+          CLAUDE_BRANCH_NAME: ""
         run: |
-          gh pr merge --auto --squash "${{ inputs.pr_number }}" --repo "$REPO" 2>/dev/null || true
+          bash .github/scripts/enable-auto-merge.sh
+
+      - name: Skip auto-merge during local act smoke tests
+        if: env.ACT == 'true'
+        run: |
+          echo "Skipping gh pr merge --auto --squash because ACT=true local smoke test."
 
       - name: Ensure initial attempt label
         if: inputs.trigger_type == 'issue_labeled'
