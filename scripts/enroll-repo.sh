@@ -126,9 +126,8 @@ echo ""
 echo "Step 3: Verifying CLAUDE_CODE_OAUTH_TOKEN org secret is accessible to $REPO..."
 echo ""
 
-# The GitHub API returns the list of repos a secret is accessible to only for org secrets.
-# We check whether the secret appears in the repo's available secrets list.
-SECRET_CHECK=$(gh api "repos/$REPO/actions/secrets" --jq '.secrets[].name' 2>/dev/null || echo "")
+# The GitHub API endpoint below reports org secrets that are available to the target repo.
+SECRET_CHECK=$(gh api "repos/$REPO/actions/organization-secrets" --jq '.secrets[].name' 2>/dev/null || echo "")
 
 if echo "$SECRET_CHECK" | grep -q "^CLAUDE_CODE_OAUTH_TOKEN$"; then
   echo "  [ok] CLAUDE_CODE_OAUTH_TOKEN is accessible to $REPO."

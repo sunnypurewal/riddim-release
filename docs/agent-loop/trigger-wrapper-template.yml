@@ -4,8 +4,8 @@
 # No edits required. Inherits all secrets from the org.
 #
 # Prerequisites:
-# - Org secrets CLAUDE_CODE_OAUTH_TOKEN and REVIEWER_BOT_PAT must be set.
-# - This repo must be granted access to those org secrets.
+# - Org secrets CLAUDE_CODE_OAUTH_TOKEN, DEV_BOT_PAT, and REVIEWER_BOT_PAT must be set
+#   and granted to this repo.
 # - Branch protection on main must require the `reviewer-agent-passed` check.
 # - All agent:* labels must exist (run scripts/enroll-repo.sh to create them).
 #
