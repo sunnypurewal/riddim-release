@@ -53,14 +53,10 @@ on:
         type: boolean
         default: false
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        required: true
       DEV_BOT_PAT:
         required: true
       REVIEWER_BOT_PAT:
         required: true
-      CODEX_AUTH_JSON:
-        required: false
 
   workflow_dispatch:
     inputs:
@@ -245,24 +241,13 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore Codex auth
-        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
-        env:
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: |
-          mkdir -p ~/.codex
-          printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
-
       - name: Run conflict resolver
         if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
-        uses: anthropics/claude-code-action@v1
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          path_to_claude_code_executable: claude
-          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
-          prompt: ${{ steps.conflict_prompt.outputs.prompt }}
+        run: |
+          claude -p "${{ steps.conflict_prompt.outputs.prompt }}" --max-turns 20
 
       - name: Validate and continue resolved rebase
         if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
