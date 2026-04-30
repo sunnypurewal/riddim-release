@@ -10,8 +10,9 @@
 #   developer workflow's auto-merge post-step. This workflow lets any enrolled
 #   repo enable GitHub auto-merge by adding the `automate` label to a PR.
 #
-# REQUIRED SECRET:
-#   DEV_BOT_PAT / dev_bot_pat
+# REQUIRED SECRETS:
+#   DEV_BOT_APP_ID / dev_bot_app_id
+#   DEV_BOT_PRIVATE_KEY / dev_bot_private_key
 # ============================================================================
 
 name: Automate Auto-Merge
@@ -32,7 +33,9 @@ on:
         type: string
         default: ""
     secrets:
-      dev_bot_pat:
+      dev_bot_app_id:
+        required: true
+      dev_bot_private_key:
         required: true
 
 permissions:
@@ -49,9 +52,17 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Generate developer-bot token
+        id: dev-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.dev_bot_app_id || secrets.DEV_BOT_APP_ID }}
+          private-key: ${{ secrets.dev_bot_private_key || secrets.DEV_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Enable GitHub auto-merge
         env:
-          GH_TOKEN: ${{ secrets.dev_bot_pat || secrets.DEV_BOT_PAT }}
+          GH_TOKEN: ${{ steps.dev-token.outputs.token }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_REPOSITORY: ${{ inputs.repository || '' }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number || 0 }}
