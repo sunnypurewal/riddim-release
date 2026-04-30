@@ -191,11 +191,11 @@ jobs:
                   echo "  [dry-run] Would dispatch agent-rebase (E9) for PR #${pr_number}."
                 else
                   echo "  Dispatching agent-rebase (E9) for PR #${pr_number}..."
-                  # E9 workflow (agent-rebase.yml) is implemented in RIDDIM-137.
-                  # Until it ships, label the PR so a human knows it needs attention.
-                  gh pr edit "$pr_number" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" 2>/dev/null || true
-                  gh pr comment "$pr_number" --repo "$CONSUMER_REPO" \
-                    --body "**Rebase Watcher:** PR has merge conflicts (\`dirty\` state). E9 agent-conflict resolution is not yet deployed. Labelling \`agent:needs-human\` until RIDDIM-137 ships." 2>/dev/null || true
+                  gh workflow run agent-rebase.yml \
+                    --repo RiddimSoftware/riddim-release \
+                    --field consumer_repo="$CONSUMER_REPO" \
+                    --field pr_number="$pr_number" \
+                    --field base_branch="$base_ref"
                 fi
                 routed_dirty=$(( routed_dirty + 1 ))
                 ;;
@@ -208,7 +208,7 @@ jobs:
                 skipped=$(( skipped + 1 ))
                 ;;
               unknown)
-                echo "  ::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
+                echo "::warning::PR #${pr_number} returned unknown state. Cron backstop will retry."
                 errors=$(( errors + 1 ))
                 ;;
               *)

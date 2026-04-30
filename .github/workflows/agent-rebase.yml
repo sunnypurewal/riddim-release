@@ -4,21 +4,23 @@
 # Consumer repos call this from a base-branch push watcher or scheduled watcher
 # after selecting an open PR labeled `autonomous`.
 #
-# Required caller behavior:
-# - Only call for open PRs that are not labeled `agent:pause` or `agent:needs-human`.
-# - Pass the PR number and consumer build/test commands.
-# - Keep concurrency group `rebase-${{ github.repository }}-${{ inputs.pr_number }}`.
-#
 # Outcomes:
 # - clean/behind: fast-forward rebase and push with --force-with-lease.
-# - dirty: invoke conflict resolver, run consumer verification, push only on green.
-# - guard blocked: apply agent:needs-human and leave a fixed-marker PR comment.
+# - dirty: invoke conflict resolver, validate the edit surface, run consumer
+#   verification, and push only on green.
+# - guard blocked or verification failed: apply agent:needs-human and leave a
+#   fixed-marker PR comment for human handoff.
 
 name: Agent Rebase (reusable)
 
 on:
   workflow_call:
     inputs:
+      consumer_repo:
+        description: "Owner/repo of the consuming repository (e.g. RiddimSoftware/epac)"
+        required: false
+        type: string
+        default: ""
       pr_number:
         required: true
         type: number
@@ -60,6 +62,10 @@ on:
 
   workflow_dispatch:
     inputs:
+      consumer_repo:
+        description: "Owner/repo of the consuming repository (e.g. RiddimSoftware/epac)"
+        required: true
+        type: string
       pr_number:
         description: "PR number to rebase"
         required: true
@@ -76,8 +82,14 @@ on:
         default: true
 
 concurrency:
-  group: rebase-${{ github.repository }}-${{ inputs.pr_number }}
+  group: rebase-${{ inputs.consumer_repo || github.repository }}-${{ inputs.pr_number }}
   cancel-in-progress: true
+
+env:
+  CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
+  NEEDS_HUMAN_LABEL: agent:needs-human
+  CONFLICT_CONTEXT_DIR: .agent-rebase
+  GUARD_COMMENT_MARKER: "<!-- riddim:agent-rebase:failure -->"
 
 jobs:
   rebase:
@@ -89,9 +101,10 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - name: Checkout PR branch
+      - name: Checkout workflow helpers
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.consumer_repo || github.repository }}
           token: ${{ secrets.DEV_BOT_PAT || github.token }}
           fetch-depth: 0
 
@@ -99,14 +112,16 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          head_ref="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          head_repo="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRepositoryOwner --jq .headRepositoryOwner.login)"
-          labels="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          pr_json="$(gh pr view "$PR_NUMBER" --repo "$CONSUMER_REPO" --json headRefName,headRepositoryOwner,labels)"
+          head_ref="$(jq -r .headRefName <<< "$pr_json")"
+          head_owner="$(jq -r .headRepositoryOwner.login <<< "$pr_json")"
+          labels="$(jq -r '.labels[].name' <<< "$pr_json")"
 
-          if grep -Fxq "agent:pause" <<< "$labels" || grep -Fxq "agent:needs-human" <<< "$labels"; then
+          if grep -Fxq "agent:pause" <<< "$labels" || grep -Fxq "$NEEDS_HUMAN_LABEL" <<< "$labels"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "PR #$PR_NUMBER is paused or needs human review; skipping."
             exit 0
@@ -114,12 +129,11 @@ jobs:
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
-          echo "head_repo=$head_repo" >> "$GITHUB_OUTPUT"
+          echo "head_owner=$head_owner" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare branch
+      - name: Prepare PR branch
         if: ${{ steps.pr.outputs.skip != 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
           BASE_BRANCH: ${{ inputs.base_branch }}
           HEAD_REF: ${{ steps.pr.outputs.head_ref }}
         run: |
@@ -156,7 +170,7 @@ jobs:
           REBASE_MAX_LINES: ${{ inputs.rebase_max_lines || 200 }}
         run: |
           set -euo pipefail
-          output="$(bash .github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "$GITHUB_REPOSITORY")"
+          output="$(bash .github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "${{ inputs.consumer_repo || github.repository }}")"
           decision="$(head -n 1 <<< "$output")"
           reason_json="$(tail -n 1 <<< "$output")"
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
@@ -172,6 +186,22 @@ jobs:
         run: |
           echo "Rebase guard decision: ${{ steps.guard.outputs.decision }}"
           echo '${{ steps.guard.outputs.reason_json }}'
+          git rebase --abort >/dev/null 2>&1 || true
+
+      - name: Extract conflict context
+        if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        id: conflict_context
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/extract-conflict-context.sh \
+            "${{ inputs.pr_number }}" \
+            "$CONSUMER_REPO" \
+            "${{ inputs.base_branch }}" \
+            "$CONFLICT_CONTEXT_DIR" | tee "$CONFLICT_CONTEXT_DIR/outputs.txt"
+          cat "$CONFLICT_CONTEXT_DIR/outputs.txt" >> "$GITHUB_OUTPUT"
 
       - name: Load conflict resolver prompt
         if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
@@ -181,10 +211,7 @@ jobs:
             echo "prompt<<EOF"
             cat .github/agent-prompts/conflict-resolver-v1.md
             echo
-            echo "Resolve conflicts for PR #${{ inputs.pr_number }} in ${GITHUB_REPOSITORY}."
-            echo "Base branch: ${{ inputs.base_branch }}"
-            echo "Conflicting files:"
-            git diff --name-only --diff-filter=U
+            cat "$CONFLICT_CONTEXT_DIR/conflict-context.md"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -198,27 +225,79 @@ jobs:
           github_token: ${{ secrets.REVIEWER_BOT_PAT }}
           prompt: ${{ steps.conflict_prompt.outputs.prompt }}
 
-      - name: Continue rebase after conflict resolver
+      - name: Validate and continue resolved rebase
         if: ${{ steps.guard.outputs.decision == 'ok' && steps.mechanical.outputs.state == 'dirty' && !inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          if git diff --check; then
-            git add $(git diff --name-only --diff-filter=U)
-            git rebase --continue
-          else
+          if ! bash .github/scripts/validate-conflict-resolution.sh \
+            "$CONFLICT_CONTEXT_DIR/conflicted-files.txt" \
+            "$CONFLICT_CONTEXT_DIR/outside-snapshot.json"; then
+            diagnostic="$(mktemp)"
+            {
+              echo "$GUARD_COMMENT_MARKER"
+              echo "Conflict resolver validation failed for PR #${PR_NUMBER}."
+              echo
+              echo "The workflow aborted the rebase and did not push. A human must inspect the conflict resolution."
+              echo
+              echo "Conflicted files:"
+              echo '```'
+              cat "$CONFLICT_CONTEXT_DIR/conflicted-files.txt"
+              echo '```'
+            } > "$diagnostic"
+            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "$NEEDS_HUMAN_LABEL"
+            gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body-file "$diagnostic"
             git rebase --abort || true
-            gh pr edit "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --add-label "agent:needs-human"
-            gh pr comment "${{ inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --body "Conflict resolver produced whitespace or marker errors; rebase aborted and human review is required."
             exit 1
           fi
 
-      - name: Run consumer build
-        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.build_command != '' && !inputs.self_test_mode }}
-        run: ${{ inputs.build_command }}
+          xargs git add < "$CONFLICT_CONTEXT_DIR/conflicted-files.txt"
+          GIT_EDITOR=true git rebase --continue
 
-      - name: Run consumer tests
-        if: ${{ steps.guard.outputs.decision == 'ok' && inputs.test_command != '' && !inputs.self_test_mode }}
-        run: ${{ inputs.test_command }}
+      - name: Run consumer verification
+        if: ${{ steps.guard.outputs.decision == 'ok' && !inputs.self_test_mode }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          BUILD_COMMAND: ${{ inputs.build_command }}
+          TEST_COMMAND: ${{ inputs.test_command }}
+        run: |
+          set -euo pipefail
+          run_and_capture() {
+            local label="$1"
+            local command="$2"
+            [[ -n "$command" ]] || return 0
+            echo "Running ${label}: ${command}"
+            bash -lc "$command"
+          }
+
+          if ! run_and_capture "consumer build" "$BUILD_COMMAND"; then
+            reason="Consumer build command failed."
+          elif ! run_and_capture "consumer tests" "$TEST_COMMAND"; then
+            reason="Consumer test command failed."
+          else
+            reason=""
+          fi
+
+          if [[ -n "$reason" ]]; then
+            diagnostic="$(mktemp)"
+            {
+              echo "$GUARD_COMMENT_MARKER"
+              echo "Agent rebase verification failed for PR #${PR_NUMBER}."
+              echo
+              echo "Reason: ${reason}"
+              echo
+              echo "The workflow aborted the rebase and did not push. A human must inspect the PR."
+            } > "$diagnostic"
+            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "$NEEDS_HUMAN_LABEL"
+            gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body-file "$diagnostic"
+            git rebase --abort || true
+            exit 1
+          fi
 
       - name: Push rebased PR branch
         if: ${{ steps.guard.outputs.decision == 'ok' && !inputs.self_test_mode }}
