@@ -3,34 +3,20 @@
 # Run before merging changes to developer.yml or developer prompts:
 #   gh workflow run _dev-self-test.yml \
 #     --repo RiddimSoftware/riddim-release \
-#     -f trigger_type=issue-build \
-#     -f issue_body="Synthetic issue body"
+#     -f review_comments="Synthetic review comment"
 
 name: Developer Workflow Self-Test
 
 on:
   workflow_dispatch:
     inputs:
-      trigger_type:
-        description: "Self-test path to exercise."
-        required: true
-        type: choice
-        options:
-          - issue-build
-          - pr-fixup
-        default: issue-build
-      issue_body:
-        description: "Synthetic issue body for issue-build self-tests."
-        required: false
-        type: string
-        default: "Create the deterministic developer self-test artifact."
       review_comments:
         description: "Synthetic review comments for pr-fixup self-tests."
         required: false
         type: string
         default: "Address the deterministic developer self-test review comment."
       cleanup:
-        description: "Delete throwaway PRs and selftest branches after assertions."
+        description: "Delete throwaway selftest branches after assertions."
         required: false
         type: boolean
         default: true
@@ -49,17 +35,17 @@ jobs:
     name: Exercise developer.yml
     uses: ./.github/workflows/developer.yml
     with:
-      trigger_type: ${{ inputs.trigger_type == 'issue-build' && 'issue_labeled' || 'changes_requested' }}
-      issue_number: ${{ github.run_id }}
-      issue_body: ${{ inputs.issue_body }}
-      pr_number: ${{ inputs.trigger_type == 'pr-fixup' && github.run_id || 0 }}
+      trigger_type: changes_requested
+      pr_number: ${{ github.run_id }}
       review_comments: ${{ inputs.review_comments }}
       prompt_override: "RIDDIM-111 deterministic self-test. Do not invoke the agent."
+      mock_labels: "none"
       self_test_mode: true
       self_test_branch: selftest/${{ github.run_id }}
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+      dev_bot_app_id: ${{ secrets.DEV_BOT_APP_ID }}
+      dev_bot_private_key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
 
   assert-and-cleanup:
     name: Assert artifacts and clean up
@@ -84,36 +70,14 @@ jobs:
 
       - name: Assert expected artifact exists
         if: ${{ needs.exercise-developer-workflow.result == 'success' && env.ACT != 'true' }}
-        env:
-          TRIGGER_TYPE: ${{ inputs.trigger_type }}
         run: |
           set -euo pipefail
-
-          if [[ "$TRIGGER_TYPE" == "issue-build" ]]; then
-            test -s self-test-artifact/developer-self-test.md
-          else
-            test -s self-test-artifact/developer-self-test-fixup.md
-          fi
+          test -s self-test-artifact/developer-self-test-fixup.md
 
       - name: Note local act assertion coverage
         if: ${{ needs.exercise-developer-workflow.result == 'success' && env.ACT == 'true' }}
         run: |
           echo "ACT=true; artifact assertion ran inside the reusable workflow job."
-
-      - name: Close throwaway PRs
-        if: ${{ inputs.cleanup && needs.exercise-developer-workflow.result == 'success' && env.ACT != 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.DEV_BOT_PAT || github.token }}
-          BRANCH: selftest/${{ github.run_id }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          prs="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[].number')"
-          while IFS= read -r pr; do
-            [[ -z "$pr" ]] && continue
-            gh pr close "$pr" --repo "$REPO" --comment "Closing deterministic developer workflow self-test PR."
-          done <<< "$prs"
 
       - name: Delete self-test branch
         if: ${{ inputs.cleanup && needs.exercise-developer-workflow.result == 'success' && env.ACT != 'true' }}

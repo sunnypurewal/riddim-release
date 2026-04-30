@@ -1,13 +1,11 @@
 # developer-self-test.yml
 #
-# Self-test for the reusable developer.yml workflow.
-# Run this manually in riddim-release to validate changes to developer.yml
-# before merging -- especially important because all consumers run @main.
+# Lightweight self-test for the reusable developer.yml workflow (pr-fixup path).
+# For the full self-test with cleanup, use _dev-self-test.yml.
 #
 # Usage:
 #   gh workflow run developer-self-test.yml \
 #     --repo RiddimSoftware/riddim-release \
-#     --field issue_number=1 \
 #     --field dry_run=true
 
 name: Developer Agent Self Test
@@ -15,13 +13,8 @@ name: Developer Agent Self Test
 on:
   workflow_dispatch:
     inputs:
-      issue_number:
-        description: "Synthetic issue number to use in prompt (does not need to exist)"
-        required: false
-        default: "0"
-        type: string
       dry_run:
-        description: "If true, print the prompt but do not invoke the agent"
+        description: "If true, print the call parameters but do not invoke the workflow"
         required: false
         default: "true"
         type: boolean
@@ -34,13 +27,12 @@ jobs:
     steps:
       - name: Print synthetic call parameters
         run: |
-          echo "issue_number: ${{ inputs.issue_number }}"
           echo "dry_run: ${{ inputs.dry_run }}"
           echo ""
           echo "Would call developer.yml with:"
-          echo "  trigger_type: issue_labeled"
-          echo "  issue_number: ${{ inputs.issue_number }}"
-          echo "  issue_body: <synthetic smoke test body>"
+          echo "  trigger_type: changes_requested"
+          echo "  pr_number: <synthetic run id>"
+          echo "  self_test_mode: true"
           echo ""
           echo "No agent was invoked. Set dry_run=false to run the full test."
 
@@ -50,21 +42,13 @@ jobs:
     uses: ./.github/workflows/developer.yml
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
+      dev_bot_app_id: ${{ secrets.DEV_BOT_APP_ID }}
+      dev_bot_private_key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
     with:
-      trigger_type: issue_labeled
-      issue_number: ${{ fromJSON(inputs.issue_number) }}
-      issue_body: |
-        ## Self-test issue
-
-        This is a synthetic issue used to validate the developer-agent workflow.
-
-        Add a file `smoke-test/developer-self-test.md` with the content:
-        ```
-        # Developer Agent Self Test
-        This file was created by the developer-agent self-test workflow.
-        Run: ${{ github.run_id }}
-        ```
-
-        Open a PR against main, title "chore: developer self-test run ${{ github.run_id }}".
-        Close it after creation -- this is only a smoke test.
+      trigger_type: changes_requested
+      pr_number: ${{ github.run_id }}
+      review_comments: "Synthetic review comment for developer self-test run ${{ github.run_id }}."
+      prompt_override: "Developer self-test. Do not invoke the agent."
+      mock_labels: "none"
+      self_test_mode: true
+      self_test_branch: selftest/${{ github.run_id }}
