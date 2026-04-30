@@ -57,7 +57,7 @@ gh pr view <pr-number> --repo <owner/repo> --json labels,url
      --remove-label "agent:attempt-2" \
      --remove-label "agent:attempt-3"
    ```
-   Then push a fix commit to the branch to trigger the reviewer again, or re-add `agent:build` to the source issue to start fresh.
+   Then push a fix commit to the branch to trigger the reviewer again, or close the PR and re-run the Jira `agent:pr` dispatch flow from a fresh branch.
 
 ---
 

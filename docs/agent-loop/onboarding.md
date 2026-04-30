@@ -1,427 +1,288 @@
-# Autonomous PR Loop — Onboarding Guide
+# Autonomous PR Loop - Onboarding Guide
 
-> Last verified against riddim-release@main on 2026-04-30.
+> Last verified against `riddim-release@4834891` on `2026-04-30`.
 > Update this header whenever a material workflow change lands in riddim-release.
 
-**Goal:** enroll a new consumer repo in the autonomous PR loop in < 30 minutes.
+**Goal:** enroll a new consumer repo in the autonomous PR loop in under 30 minutes.
+
+Trigger surface is the Jira `agent:pr` label -> `repository_dispatch: jira-ticket-ready` -> `developer-bot` opens PR. GitHub Issues are not used.
 
 ---
 
 ## Overview
 
-The autonomous PR loop handles the full developer → review → merge cycle without human intervention for routine changes. Three actors collaborate:
+The autonomous PR loop handles the developer -> review -> merge cycle for routine changes. The reusable workflows live in `RiddimSoftware/riddim-release`, and each consumer repo adds one thin wrapper at `.github/workflows/agent-loop.yml`.
 
-1. **Developer bot** (`developer-bot`) — triggered by an `agent:build` label on an issue. Opens a PR implementing the issue body as acceptance criteria.
-2. **Reviewer bot** (`reviewer-bot`) — triggered when the developer bot opens or updates a PR. Reviews the diff and either approves + enables auto-merge, or requests changes.
-3. **GitHub auto-merge** — merges the PR once the `reviewer-agent-passed` required status check passes and all branch protection rules are satisfied.
-4. **Rebase guard** (`agent-rebase.yml`) — keeps autonomous PRs current with `main`, fast-forwards cleanly stale PRs, and escalates conflicts that exceed attempt, size, or CODEOWNERS safety caps.
+Actors:
 
-The reusable workflows live in `RiddimSoftware/riddim-release` and are called from a thin trigger wrapper in each consumer repo.
+1. `riddim-developer-bot` opens implementation PRs from an already-pushed branch.
+2. `riddim-reviewer-bot` reviews developer-bot PRs and requests fix-ups or approves.
+3. GitHub auto-merge squashes the PR after branch protection passes.
+4. `rebase-watcher.yml` detects stale autonomous PRs and routes clean rebases or conflict escalation.
 
----
-
-## Step 1 — Confirm this loop owns the repo (not prconverged)
-
-Before enrolling, confirm that the target repo is leaving the `prconverged` pipeline and moving to the RIDDIM-91 autonomous loop.
-
-**Check for `prconverged` enrollment:**
-
-```bash
-# Is the repo currently using prconverged?
-gh api repos/<owner>/<repo>/contents/.github/workflows \
-  --jq '.[].name' | grep -i prconverged
-
-# Check org-level prconverged config (if applicable)
-gh api orgs/RiddimSoftware/actions/secrets --jq '.secrets[].name' | grep -i prconverged
-```
-
-**Allocation rules:**
-- A repo must use either prconverged **or** the RIDDIM-91 loop — not both.
-- If prconverged is present, remove or disable it before enrolling.
-- Note in the ticket/PR that prconverged was removed and by whom.
-
-> **Why this matters:** Both pipelines attempt auto-merge. Running both causes race conditions and double-review noise.
+The Jira ticket remains the source of truth. Adding Jira label `agent:pr` is the entry point.
 
 ---
 
-## Step 2 — Grant org-secrets and bot-app access
+## Step 1 - Confirm this loop owns the repo
 
-The consumer repo must be granted access to the org-level secrets and have the GitHub Apps installed.
+Before enrolling, confirm the target repo is not simultaneously enrolled in any older local or daemon-based merge pipeline.
 
-### 2a — Org secrets
+Checklist:
 
-Verify that the following org secrets are accessible to the new repo. A repo admin or org owner must grant access in **Settings → Secrets and variables → Actions → Organization secrets**:
+- Search the consumer repo for old autonomous workflow files.
+- Confirm branch protection will require `reviewer-agent-passed`.
+- Confirm the consumer project has, or will receive, a Jira Automation rule for `agent:pr`.
+- Note any removed legacy automation in the enrollment PR.
+
+Both pipelines must not run at once. Double enrollment can produce duplicate PRs, duplicate reviews, or competing auto-merge attempts.
+
+---
+
+## Step 2 - Grant org secrets and bot-app access
+
+The consumer repo must have selected-repository access to the shared org secrets and both GitHub Apps.
+
+### Step 2a - Org secrets
+
+Required secrets:
 
 | Secret | Purpose |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates `claude-code-action` |
-| `DEV_BOT_PAT` | PAT token used by `developer.yml` workflow |
-| `REVIEWER_BOT_PAT` | PAT token used by `reviewer.yml` workflow |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates `claude-code-action` against the Max-plan OAuth token. |
+| `DEV_BOT_APP_ID` | GitHub App ID for the developer bot. |
+| `DEV_BOT_PRIVATE_KEY` | Private key used to mint short-lived developer-bot installation tokens. |
+| `REVIEWER_BOT_APP_ID` | GitHub App ID for the reviewer bot. |
+| `REVIEWER_BOT_PRIVATE_KEY` | Private key used to mint short-lived reviewer-bot installation tokens. |
+| `DEV_BOT_PAT` | Fine-grained PAT consumed only by `rebase-watcher.yml`; scope to one consumer repo with Contents read/write and rotate within 90 days. |
 
-```bash
-# Check which secrets the repo can currently access (org-level only):
-gh api repos/<owner>/<repo>/actions/organization-secrets --jq '[.secrets[].name]'
-```
+`REVIEWER_BOT_PAT` is not required by the current developer/reviewer/create-pr/rebase flow.
 
-If any are missing, a GitHub org admin must grant repository access at:
+A GitHub org admin grants access at:
+
 `https://github.com/organizations/RiddimSoftware/settings/secrets/actions`
 
-To avoid replacing existing repository grants, add each repo with the per-repo endpoint:
+Fine-grained PAT org policy must also allow PATs for RiddimSoftware resources:
+
+`https://github.com/organizations/RiddimSoftware/settings/personal-access-tokens`
+
+Without that policy, `RiddimSoftware` will not appear as a resource owner when minting the PAT.
+
+Verify the PAT can see the consumer repo:
 
 ```bash
-CONSUMER="RiddimSoftware/your-repo"
-CONSUMER_ID="$(gh api /repos/${CONSUMER} --jq .id)"
-
-for SECRET in CLAUDE_CODE_OAUTH_TOKEN DEV_BOT_PAT REVIEWER_BOT_PAT; do
-  gh api \
-    --method PUT \
-    "/orgs/RiddimSoftware/actions/secrets/${SECRET}/repositories/${CONSUMER_ID}"
-done
+curl -fsSI \
+  -H "Authorization: Bearer $PAT" \
+  https://api.github.com/repos/RiddimSoftware/<consumer>
 ```
 
-### 2b — GitHub App installation
+A successful setup returns HTTP 200.
 
-Confirm `developer-bot` and `reviewer-bot` are installed at org scope with access to the new repo:
+### Step 2b - GitHub App installation
 
-```bash
-# List app installations for the org
-gh api orgs/RiddimSoftware/installations --jq '.installations[].app_slug'
+Confirm both Apps are installed for the consumer repo:
 
-# Confirm both apps have repository access
-gh api "app/installations/<installation_id>/repositories" \
-  --jq '.repositories[].full_name' | grep <repo-name>
-```
+- `riddim-developer-bot`
+- `riddim-reviewer-bot`
 
-If the apps are not installed on the repo, go to:
-`https://github.com/organizations/RiddimSoftware/settings/installations`
-→ find each bot → "Configure" → add the new repo.
+Repository access should be selected-repository access, not all-repository access unless that is an explicit org decision.
+
+Required App permissions:
+
+- Contents: read/write
+- Pull requests: read/write
+- Issues: read/write
+- Workflows: read/write
+- Metadata: read
 
 ---
 
-## Step 3 — Add the trigger wrapper workflow
+## Step 3 - Add the trigger wrapper workflow
 
-Copy the trigger wrapper into the consumer repo:
+Copy `docs/agent-loop/trigger-wrapper-template.yml` into the consumer repo at `.github/workflows/agent-loop.yml`.
 
-```bash
-# From the riddim-release repo root, copy the template:
-gh api repos/RiddimSoftware/riddim-release/contents/docs/agent-loop/trigger-wrapper-template.yml \
-  --jq '.content' | base64 -d > /tmp/agent-loop.yml
+The template mirrors the live `epac` wrapper shape:
 
-# Add it to the consumer repo
-cp /tmp/agent-loop.yml <path-to-consumer-repo>/.github/workflows/agent-loop.yml
-```
+- `repository_dispatch` type `jira-ticket-ready`
+- `pull_request` for developer-bot PR open/sync/ready events
+- `pull_request_review` for reviewer-bot changes-requested fix-ups
+- `push` to `main` for stale-PR detection
+- 15-minute `schedule` backstop for stale-PR detection
+- `workflow_dispatch` for manual rebase-watcher smoke checks
 
-The template is reproduced here for reference — **use the canonical file from `docs/agent-loop/trigger-wrapper-template.yml`**, not this copy, in case it has been updated:
+Canonical job map:
+
+| Job | Trigger | Reusable workflow |
+|---|---|---|
+| `create-pr-from-jira` | `repository_dispatch: jira-ticket-ready` | `RiddimSoftware/riddim-release/.github/workflows/create-pr.yml@main` |
+| `developer-fixup` | reviewer-bot requested changes | `RiddimSoftware/riddim-release/.github/workflows/developer.yml@main` |
+| `reviewer` | developer-bot PR opened/synchronized/ready | `RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main` |
+| `rebase-watcher` | `push`, `schedule`, or `workflow_dispatch` | `RiddimSoftware/riddim-release/.github/workflows/rebase-watcher.yml@main` |
+
+The Jira dispatch payload supplies these fields to `create-pr.yml`:
 
 ```yaml
-name: Autonomous PR Loop
-
-on:
-  issues:
-    types: [labeled]
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-  pull_request_review:
-    types: [submitted]
-  push:
-    branches: [main]
-  schedule:
-    - cron: "*/15 * * * *"
-
-jobs:
-  developer:
-    if: >-
-      github.event_name == 'issues' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'agent:build' &&
-      !contains(github.event.issue.labels.*.name, 'agent:pause') &&
-      !contains(github.event.issue.labels.*.name, 'agent:needs-human')
-    uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
-    with:
-      trigger_type: issue_labeled
-      issue_number: ${{ github.event.issue.number }}
-      issue_body: ${{ github.event.issue.body }}
-    secrets: inherit
-
-  developer-fixup:
-    if: >-
-      github.event_name == 'pull_request_review' &&
-      github.event.review.state == 'changes_requested' &&
-      github.event.review.user.login == 'reviewer-bot' &&
-      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
-      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
-    uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
-    with:
-      trigger_type: changes_requested
-      issue_number: ${{ github.event.pull_request.number }}
-      pr_number: ${{ github.event.pull_request.number }}
-      review_comments: ${{ github.event.review.body }}
-    secrets: inherit
-
-  reviewer:
-    if: >-
-      github.event_name == 'pull_request' &&
-      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'ready_for_review') &&
-      github.event.pull_request.user.login == 'developer-bot' &&
-      github.event.sender.login != 'reviewer-bot' &&
-      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
-      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
-    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
-    with:
-      pr_number: ${{ github.event.pull_request.number }}
-    secrets: inherit
+with:
+  jira_ticket: ${{ github.event.client_payload.jira_ticket }}
+  jira_summary: ${{ github.event.client_payload.jira_summary }}
+  branch: ${{ github.event.client_payload.branch || '' }}
+  jira_url: ${{ github.event.client_payload.jira_url || '' }}
 ```
 
-Commit `agent-loop.yml` to `main` of the consumer repo before continuing.
+The `branch` field is optional. If omitted, `create-pr.yml` resolves a pushed branch by finding a ref name containing the Jira ticket key, case-insensitively.
+
+Do not document `gh pr create` as a fallback. Human-authored PRs do not satisfy the two-identity contract for autonomous review and merge.
 
 ---
 
-## Step 4 — Configure branch protection on `main`
+## Step 4 - Configure branch protection on `main`
 
-Branch protection must require `reviewer-agent-passed` so that PRs cannot merge without the reviewer completing its check. Run the enrollment script to print the settings URL and verify secrets:
+Branch protection must block merge until the reviewer gate and repo-local checks pass.
 
-```bash
-# From the riddim-release root:
-bash scripts/enroll-repo.sh <owner/repo>
-
-# Example:
-bash scripts/enroll-repo.sh RiddimSoftware/epac
-```
-
-If you need to apply just the status-check requirement from CLI while preserving all other branch-protection settings:
-
-```bash
-CONSUMER="RiddimSoftware/your-repo"
-export CONSUMER
-
-CURRENT_CHECKS="$(mktemp)"
-export CURRENT_CHECKS
-if ! gh api /repos/${CONSUMER}/branches/main/protection/required_status_checks > "${CURRENT_CHECKS}"; then
-  cat > "${CURRENT_CHECKS}" <<'EOF'
-{"strict": true, "contexts": []}
-EOF
-fi
-
-python3 - <<'PY'
-import json
-import subprocess
-import os
-
-consumer = os.environ["CONSUMER"]
-with open(os.environ["CURRENT_CHECKS"], "r", encoding="utf-8") as f:
-    checks = json.load(f)
-
-contexts = checks.get("contexts", [])
-if "reviewer-agent-passed" not in contexts:
-    contexts.append("reviewer-agent-passed")
-
-payload = {
-    "strict": checks.get("strict", True),
-    "contexts": contexts,
-}
-
-subprocess.run(
-    [
-        "gh", "api", "--method", "PATCH",
-        f"/repos/{consumer}/branches/main/protection/required_status_checks",
-        "--input", "-",
-    ],
-    input=json.dumps(payload).encode("utf-8"),
-    check=True,
-)
-PY
-
-rm -f "${CURRENT_CHECKS}"
-```
-
-The script cannot set all branch protection options via the API. Open the URL it prints and apply these settings manually on the `main` branch:
+Required settings:
 
 | Setting | Value |
 |---|---|
-| Require a pull request before merging | ✅ Yes |
+| Require a pull request before merging | Enabled |
 | Required approving reviews | 1 |
-| Require status checks to pass before merging | ✅ Yes |
-| Required status check name | `reviewer-agent-passed` |
-| Require branches to be up to date before merging | ✅ Yes |
-| Allow auto-merge | ✅ Yes |
-| Automatically delete head branches | ✅ Yes |
+| Dismiss stale pull request approvals when new commits are pushed | Enabled |
+| Require review from Code Owners | Enabled for high-risk paths |
+| Require conversation resolution before merging | Enabled |
+| Require status checks to pass before merging | Enabled |
+| Required status check | `reviewer-agent-passed` |
+| Require branches to be up to date before merging | Enabled |
+| Allow auto-merge | Enabled |
+| Automatically delete head branches | Enabled |
 
-> **`reviewer-agent-passed` is the critical gate.** Without it, PRs can merge before the reviewer finishes. With it, a runner/Anthropic outage blocks all merges — see `failure-runbook.md` for the manual override procedure.
-
----
-
-## Step 5 — Author CODEOWNERS for high-risk paths
-
-Create `<consumer-repo>/CODEOWNERS` covering paths that should require a human approver even when the reviewer bot approves the rest of the PR. CODEOWNERS entries override bot-only approval for matching files.
-
-Checklist of high-risk path categories to cover:
-
-- [ ] **Secrets and credentials** — `.env*`, `**/.env*`, `**/*secret*`, `**/*credential*`
-- [ ] **Release pipelines** — `fastlane/`, `.github/workflows/`, `Makefile`, `scripts/release*`
-- [ ] **Infrastructure and cloud config** — `terraform/`, `infra/`, `k8s/`, `docker-compose*`
-- [ ] **Authentication** — `**/auth/`, `**/authentication/`, `**/*Auth*`
-
-Minimum recommended `CODEOWNERS`:
-
-```
-# Secrets and credentials
-.env*                   @<your-github-handle>
-**/.env*                @<your-github-handle>
-
-# Release pipelines
-fastlane/               @<your-github-handle>
-.github/workflows/      @<your-github-handle>
-
-# Infrastructure / cloud config
-terraform/              @<your-github-handle>
-infra/                  @<your-github-handle>
-
-# Authentication
-**/auth/                @<your-github-handle>
-```
-
-Adjust paths to match the repo's actual directory structure. CODEOWNERS ensures a human must approve any PR touching these paths — the reviewer bot cannot self-approve them.
+Preserve existing consumer CI checks. Add `reviewer-agent-passed`; do not replace the current check list.
 
 ---
 
-## Step 6 — Create the `agent:*` label set
+## Step 5 - Author CODEOWNERS for high-risk paths
 
-All `agent:*` labels must exist on the consumer repo. The enrollment script creates them:
+Create or update `<consumer-repo>/CODEOWNERS` so sensitive files require a human owner even when the reviewer bot approves the rest of the PR.
 
-```bash
-bash scripts/enroll-repo.sh <owner/repo>
-```
+Minimum categories:
 
-If you prefer to create them manually, here is the full label set:
+- Secrets and credentials: `.env*`, `**/.env*`, secret material, credential material.
+- GitHub Actions and automation: `.github/`, `.github/workflows/`.
+- Release pipelines: `fastlane/`, deployment scripts, app-store or production release configuration.
+- Platform-specific production surfaces such as iOS signing, Android signing, Terraform, or infrastructure code.
 
-| Label | Hex color | Purpose |
-|---|---|---|
-| `agent:build` | `#fb8c00` | Triggers the developer workflow on an issue |
-| `agent:pause` | `#6a737d` | Halts all autonomous workflows on a PR or issue |
-| `agent:needs-human` | `#d73a4a` | Applied when attempt cap is hit; blocks automation |
-| `agent:attempt-1` | `#ffd8a8` | Attempt counter — first attempt |
-| `agent:attempt-2` | `#ffb56b` | Attempt counter — second attempt |
-| `agent:attempt-3` | `#ff922b` | Attempt counter — third attempt (final default) |
-| `agent:rebase-attempt-1` | `#c5def5` | Rebase counter — first stale-PR rebase |
-| `agent:rebase-attempt-2` | `#8db7e8` | Rebase counter — second stale-PR rebase |
-| `agent:rebase-attempt-3` | `#5319e7` | Rebase counter — third stale-PR rebase |
-| `agent:codeowners-veto` | `#b60205` | Rebase guard blocked; conflicting files are human-owned |
-| `automate` | `#0075ca` | Enrolls the PR in the autonomous code review pipeline |
+Use the consumer repo's real owner handle or team slug. Do not copy `epac` owners blindly.
 
 ---
 
-## Step 7 — Run the manual smoke test
+## Step 6 - Create required labels
 
-With enrollment complete, run both a positive and a negative smoke test before treating the repo as production-enrolled.
+Create only the labels consumed by the wrapper or guard workflows:
 
-### Positive smoke test
+| Label | Purpose |
+|---|---|
+| `autonomous` | Marks PRs enrolled in the autonomous review/merge loop; added by `create-pr.yml`. |
+| `agent:pause` | Kill switch that suppresses developer/reviewer automation. |
+| `agent:needs-human` | Marks work that exceeded guardrails or requires manual review. |
+| `agent:attempt-1` | Developer fix-up attempt counter. |
+| `agent:attempt-2` | Developer fix-up attempt counter. |
+| `agent:attempt-3` | Developer fix-up attempt counter. |
+| `agent:rebase-attempt-1` | Rebase attempt counter. |
+| `agent:rebase-attempt-2` | Rebase attempt counter. |
+| `agent:rebase-attempt-3` | Rebase attempt counter. |
+| `agent:rebase-failed` | Rebase attempts exhausted or conflict guard failed. |
+| `automate` | Enables GitHub auto-merge policy where the repo uses this marker. |
 
-1. Create a test issue in the consumer repo with a clear, simple acceptance criterion. Example body:
-   ```
-   Add a one-line comment to README.md that reads:
-   `<!-- Autonomous PR loop is active on this repo -->`
-   ```
-2. Add the `agent:build` label to the issue.
-3. In the Actions tab, confirm the `Autonomous PR Loop` workflow starts within ~30 seconds.
-4. Wait for the developer job to finish and open a PR.
-5. Confirm the reviewer job starts automatically on PR open.
-6. If the reviewer approves, watch auto-merge land the PR to `main`.
-
-**Positive smoke test passes when:** issue labeled → PR opened by developer-bot → reviewer-bot approves → PR auto-merged, without any human action.
-
-### Negative smoke test
-
-Confirm that the `reviewer-agent-passed` branch protection gate actually blocks merges when the check is absent.
-
-1. Temporarily remove `reviewer-agent-passed` from required status checks on `main` (undo after the test).
-2. Open a draft PR from any branch. Confirm the merge button is **not** blocked by the status check.
-3. Re-add `reviewer-agent-passed` as a required check.
-4. Open a new PR. Before the reviewer runs, confirm the **Merge** button shows "Some checks haven't run yet" or similar — confirming the gate is enforced.
-5. Let the reviewer run to completion and confirm the PR becomes mergeable.
-
-**Negative smoke test passes when:** `reviewer-agent-passed` absence visibly blocks the merge button.
+The Jira label `agent:pr` lives on the Jira ticket. It does not need to be a GitHub repo label.
 
 ---
 
-## Step 8 — Verification checklist
+## Step 7 - Add the Jira Automation rule
 
-Mark each item before declaring the repo enrolled:
+Add this rule in the consumer's Jira project.
 
-- [ ] Confirmed no prconverged enrollment conflict (Step 1)
-- [ ] All five org secrets accessible to this repo (Step 2a)
-- [ ] `developer-bot` and `reviewer-bot` apps installed on this repo (Step 2b)
-- [ ] `agent-loop.yml` committed to `main` (Step 3)
-- [ ] Branch protection requires `reviewer-agent-passed` on `main` (Step 4)
-- [ ] `CODEOWNERS` covers secrets, release pipelines, infra, and auth paths (Step 5)
-- [ ] All `agent:*` labels created (Step 6)
-- [ ] Positive smoke test passed: issue → PR → reviewed → merged autonomously (Step 7)
-- [ ] Negative smoke test passed: `reviewer-agent-passed` absence blocks merge (Step 7)
+Trigger:
 
----
+- Field value changed
+- Field: `Labels`
+- Change type: `Added`
+- Label: `agent:pr`
 
-## Kill switches
+Action:
 
-### `agent:pause`
+- Send web request
+- URL: `https://api.github.com/repos/RiddimSoftware/<consumer>/dispatches`
+- Method: `POST`
+- Wait for response: yes
 
-Add the `agent:pause` label to any PR or issue to immediately halt autonomous processing. No new developer or reviewer runs will start. Runs already in progress are not cancelled.
+Headers:
 
-Remove the label to re-enable automation.
-
-### `agent:needs-human`
-
-Applied automatically by the developer workflow when the attempt cap is reached (default: 3 attempts). Once applied, no further developer or reviewer runs start. A human must review the PR manually.
-
-To reset: remove `agent:needs-human` and all `agent:attempt-*` labels from the PR.
-
----
-
-## Failure runbook
-
-See [`failure-runbook.md`](failure-runbook.md) for diagnosis and recovery steps covering:
-- Reviewer stuck in a loop
-- Attempt cap hit
-- `reviewer-agent-passed` check blocked (runner outage, Anthropic outage)
-- `riddim-release` `main` broken (blast radius: all consumers)
-- Manual override path for `reviewer-agent-passed` failure
-
----
-
-## Configuration
-
-### Rebase guard thresholds (E10)
-
-The rebase guard (`rebase-guard.sh`) enforces three safety limits on automated
-rebases. All three have defaults that can be overridden per consumer repo via
-workflow inputs or env vars.
-
-| Variable | Default | Override via |
-|---|---|---|
-| `REBASE_MAX_ATTEMPTS` | `3` | `rebase_max_attempts` workflow input on `agent-rebase.yml`; env var in `auto-rebase.yml` guard step |
-| `REBASE_MAX_FILES` | `8` | `rebase_max_files` workflow input on `agent-rebase.yml` |
-| `REBASE_MAX_LINES` | `200` | `rebase_max_lines` workflow input on `agent-rebase.yml` |
-
-Example override in the consumer repo's trigger wrapper:
-
-```yaml
-uses: RiddimSoftware/riddim-release/.github/workflows/agent-rebase.yml@main
-with:
-  rebase_max_attempts: 5
-  rebase_max_files: 12
-  rebase_max_lines: 400
+```text
+Accept: application/vnd.github+json
+X-GitHub-Api-Version: 2022-11-28
+Content-Type: application/json
+Authorization: Bearer <PAT>
 ```
 
-For full details on the attempt counter, CODEOWNERS veto, and comment markers, see
-[`e10-rebase-guards.md`](e10-rebase-guards.md).
+Store the PAT in Atlassian Automation rule variables or secret storage. Never paste a literal token into the rule body or a Jira comment.
+
+Body:
+
+```json
+{
+  "event_type": "jira-ticket-ready",
+  "client_payload": {
+    "jira_ticket": "{{issue.key}}",
+    "jira_summary": "{{issue.summary.jsonEncode}}",
+    "jira_url": "{{issue.url}}"
+  }
+}
+```
+
+Omit `branch` by default so `create-pr.yml` resolves by ticket-key substring. Include it only when the branch name cannot include the ticket key.
+
+PAT requirements:
+
+- Fine-grained PAT
+- Resource owner: `RiddimSoftware`
+- Selected repository: exactly one consumer repo
+- Permission: Contents read/write
+- Expiry: 90 days or less
 
 ---
 
-## Related resources
+## Step 8 - Smoke test the dispatch flow
 
-- [`e1-checklist.md`](e1-checklist.md) — org-level prerequisites (do this before enrolling any repo)
-- [`failure-runbook.md`](failure-runbook.md) — diagnosis and recovery
-- [`trigger-wrapper-template.yml`](trigger-wrapper-template.yml) — canonical wrapper template
-- [`e10-rebase-guards.md`](e10-rebase-guards.md) — rebase guard thresholds, attempt counter, CODEOWNERS veto
-- [`scripts/enroll-consumer.sh`](../../scripts/enroll-consumer.sh) — per-repo enrollment automation (supports `--dry-run`)
-- [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation (legacy; prefer `enroll-consumer.sh`)
-- [RIDDIM-91](https://riddim.atlassian.net/browse/RIDDIM-91) — parent initiative
-- [RIDDIM-99](https://riddim.atlassian.net/browse/RIDDIM-99) — this epic
+Use a low-risk throwaway ticket.
+
+1. Push a throwaway branch named `claude/<ticket-key-lower>-noop` containing one trivial commit.
+2. Create a Jira ticket in the consumer project with summary `noop test` and one clear acceptance criterion.
+3. Add Jira label `agent:pr` to the ticket.
+4. Within about 30 seconds, expect a successful Jira Automation audit-log entry.
+5. Confirm a GitHub Actions run starts on `Autonomous PR Loop` from `repository_dispatch`.
+6. Confirm a PR opens by `riddim-developer-bot[bot]` with title `<TICKET>: noop test`.
+7. Confirm the PR receives the `autonomous` label.
+8. Confirm auto-merge is enabled with squash strategy.
+
+Negative smoke test:
+
+- Open or identify a test PR without `reviewer-agent-passed`.
+- Confirm branch protection blocks merge.
+- Do not relax branch protection except as a documented manual override from `failure-runbook.md`.
+
+---
+
+## Step 9 - Verification checklist
+
+Enrollment is complete when all checks pass:
+
+- Consumer wrapper contains `repository_dispatch: jira-ticket-ready`.
+- Consumer wrapper has no GitHub-Issues entry point.
+- Jira Automation rule fires when Jira label `agent:pr` is added.
+- Jira Automation request body includes `jira_ticket`, `jira_summary`, and `jira_url`.
+- `create-pr-from-jira` calls `create-pr.yml@main`.
+- `developer-fixup` calls `developer.yml@main` only after reviewer-bot changes requested.
+- `reviewer` calls `reviewer.yml@main` only for developer-bot PRs.
+- `rebase-watcher` calls `rebase-watcher.yml@main` on `push`, `schedule`, or `workflow_dispatch`.
+- `reviewer-agent-passed` is required on `main`.
+- CODEOWNERS covers high-risk paths.
+- Required labels exist in GitHub.
+- Jira label `agent:pr` has opened a smoke-test PR through `repository_dispatch`.
