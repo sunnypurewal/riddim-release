@@ -1,0 +1,88 @@
+# Reusable PR build sanity check.
+#
+# Runs a fast xcodebuild build on every PR to main on consumer iOS repos.
+# No signing, no archiving, no upload. Catches compile errors before
+# auto-merge can land a broken reviewer-bot fix.
+#
+# Consumer repos call this from a thin trigger wrapper:
+#
+#   on:
+#     pull_request:
+#       branches: [main]
+#
+#   jobs:
+#     pr-build:
+#       uses: RiddimSoftware/riddim-release/.github/workflows/pr-build.yml@main
+#       with:
+#         scheme: "<scheme>"
+#         project: "<project>.xcodeproj"   # path relative to working_directory
+#
+# The job name is fixed as "pr-build" so the required status check name is stable.
+
+name: PR Build
+
+on:
+  workflow_call:
+    inputs:
+      scheme:
+        description: Xcode scheme to build.
+        required: true
+        type: string
+      project:
+        description: >
+          Path to .xcodeproj, relative to working_directory.
+          Mutually exclusive with workspace.
+        required: false
+        type: string
+        default: ""
+      workspace:
+        description: >
+          Path to .xcworkspace, relative to working_directory.
+          Mutually exclusive with project.
+        required: false
+        type: string
+        default: ""
+      working_directory:
+        description: Directory to run xcodebuild from (relative to repo root).
+        required: false
+        type: string
+        default: "."
+      xcode_version:
+        description: >
+          Xcode version to select (e.g. "16.2"). Uses runner default when omitted.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  pr-build:
+    name: pr-build
+    runs-on: ["self-hosted", "macOS"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        if: ${{ inputs.xcode_version != '' }}
+        run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer
+
+      - name: Build
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          SCHEME: ${{ inputs.scheme }}
+          PROJECT: ${{ inputs.project }}
+          WORKSPACE: ${{ inputs.workspace }}
+        run: |
+          set -euo pipefail
+
+          args=()
+          if [[ -n "${PROJECT}" ]]; then
+            args+=(-project "${PROJECT}")
+          elif [[ -n "${WORKSPACE}" ]]; then
+            args+=(-workspace "${WORKSPACE}")
+          fi
+
+          xcodebuild build \
+            "${args[@]}" \
+            -scheme "${SCHEME}" \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO
