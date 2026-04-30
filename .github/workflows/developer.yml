@@ -1,0 +1,134 @@
+# Shared infrastructure -- high blast radius -- see docs/agent-loop/.
+#
+# Consumer trigger wrapper conditions for E4-S1:
+# - Initial build: run when an issue is labeled `agent:build`.
+# - Fix-up: run when a pull request receives `changes_requested` from reviewer-bot
+#   or is labeled `agent:fixup`.
+# - Do not run when the target issue or PR has `agent:pause` or
+#   `agent:needs-human`; the reusable workflow owns the definitive guard once
+#   E2-S5 lands.
+# - Call this workflow with trigger_type set to `issue-build` or `pr-fixup`,
+#   passing the source issue_number or pr_number and the relevant body/comment
+#   context.
+
+name: Reusable Developer Agent
+
+on:
+  workflow_call:
+    inputs:
+      trigger_type:
+        description: "Developer trigger path: issue-build or pr-fixup."
+        required: true
+        type: string
+      issue_number:
+        description: "Source issue number for issue-build runs."
+        required: false
+        type: string
+        default: ""
+      pr_number:
+        description: "Source pull request number for pr-fixup runs."
+        required: false
+        type: string
+        default: ""
+      issue_body:
+        description: "Issue body and acceptance criteria for issue-build runs."
+        required: false
+        type: string
+        default: ""
+      review_comments:
+        description: "Review and inline comments for pr-fixup runs."
+        required: false
+        type: string
+        default: ""
+      prompt_override:
+        description: "Optional prompt override for self-tests or controlled debugging."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      DEV_BOT_PAT:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      trigger_type:
+        description: "Developer trigger path."
+        required: true
+        type: choice
+        options:
+          - issue-build
+          - pr-fixup
+      issue_number:
+        description: "Synthetic issue number for issue-build smoke tests."
+        required: false
+        type: string
+        default: ""
+      pr_number:
+        description: "Synthetic PR number for pr-fixup smoke tests."
+        required: false
+        type: string
+        default: ""
+      issue_body:
+        description: "Synthetic issue body for smoke tests."
+        required: false
+        type: string
+        default: ""
+      review_comments:
+        description: "Synthetic review comments for smoke tests."
+        required: false
+        type: string
+        default: ""
+      prompt_override:
+        description: "Optional synthetic prompt override."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: developer-${{ inputs.issue_number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  developer-stub:
+    name: Developer workflow stub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print sanitized developer context
+        shell: bash
+        env:
+          TRIGGER_TYPE: ${{ inputs.trigger_type }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          REVIEW_COMMENTS: ${{ inputs.review_comments }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+        run: |
+          set -euo pipefail
+
+          case "$TRIGGER_TYPE" in
+            issue-build|pr-fixup) ;;
+            *)
+              echo "::error::trigger_type must be issue-build or pr-fixup."
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "## Developer workflow stub"
+            echo ""
+            echo "- Trigger type: ${TRIGGER_TYPE}"
+            echo "- Issue number: ${ISSUE_NUMBER:-<none>}"
+            echo "- PR number: ${PR_NUMBER:-<none>}"
+            echo "- Issue body bytes: ${#ISSUE_BODY}"
+            echo "- Review comments bytes: ${#REVIEW_COMMENTS}"
+            echo "- Prompt override bytes: ${#PROMPT_OVERRIDE}"
+            echo ""
+            echo "No agent is invoked by this skeleton. Prompt wiring lands in E2-S2/E2-S3."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
