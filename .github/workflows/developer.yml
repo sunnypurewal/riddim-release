@@ -400,12 +400,28 @@ jobs:
             # ── Initial build prompt ─────────────────────────────────────────
             ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title -q '.title')
             export ISSUE_TITLE
+            export WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-$REPO@main}"
+            TEMPLATE_REPO="${WORKFLOW_REF%@*}"
+            TEMPLATE_REF="${WORKFLOW_REF#*@}"
+            TEMPLATE_REPO="${TEMPLATE_REPO%/.github/workflows/*}"
+            TEMPLATE_REF="${TEMPLATE_REF#refs/heads/}"
+            TEMPLATE_REF="${TEMPLATE_REF#refs/tags/}"
+
+            TEMPLATE_PATH="$(mktemp)"
+            export TEMPLATE_PATH
+            if ! gh api "repos/$TEMPLATE_REPO/contents/.github/prompts/developer-initial-build.md?ref=$TEMPLATE_REF" \
+              --jq '.content' \
+              | tr -d '\n' \
+              | base64 -d > "$TEMPLATE_PATH"; then
+              echo "::error::Unable to load developer-initial-build template from ${TEMPLATE_REPO}@${TEMPLATE_REF}."
+              exit 1
+            fi
 
             python3 <<'PY' >> "$GITHUB_OUTPUT"
           import os
           from pathlib import Path
 
-          template = Path(".github/prompts/developer-initial-build.md").read_text()
+          template = Path(os.environ["TEMPLATE_PATH"]).read_text()
           issue_body = os.environ.get("ISSUE_BODY", "").rstrip() or "_No issue body provided._"
           rendered = (
               template
