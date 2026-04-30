@@ -99,7 +99,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: RiddimSoftware/riddim-release
-          ref: ${{ github.workflow_sha }}
+          ref: main
           token: ${{ steps.reviewer-bot-token.outputs.token }}
 
       # ── agent:pause kill-switch — must be first step after checkout ─────────
