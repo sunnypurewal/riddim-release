@@ -31,6 +31,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr_number:
+        description: "Optional existing PR number for cancellation verification."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -38,16 +43,17 @@ permissions:
   checks: write
 
 concurrency:
-  group: rev-self-test-${{ github.run_id }}
-  cancel-in-progress: false
+  group: rev-self-test-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   setup:
-    name: Create throwaway PR
+    name: Resolve throwaway PR
     runs-on: ubuntu-latest
     outputs:
-      pr_number: ${{ steps.open_pr.outputs.pr_number }}
-      branch: ${{ steps.open_pr.outputs.branch }}
+      pr_number: ${{ steps.resolve_pr.outputs.pr_number }}
+      branch: ${{ steps.resolve_pr.outputs.branch }}
+      created_pr: ${{ steps.resolve_pr.outputs.created_pr }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -55,15 +61,27 @@ jobs:
           token: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
           fetch-depth: 0
 
-      - name: Create throwaway branch and PR
-        id: open_pr
+      - name: Resolve or create throwaway PR
+        id: resolve_pr
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
+
+          if [[ -n "${INPUT_PR_NUMBER}" ]]; then
+            gh pr view "${INPUT_PR_NUMBER}" --repo "${REPO}" --json number,state --jq '.number' >/dev/null
+            {
+              echo "branch="
+              echo "created_pr=false"
+              echo "pr_number=${INPUT_PR_NUMBER}"
+            } >> "${GITHUB_OUTPUT}"
+            echo "Using existing PR #${INPUT_PR_NUMBER} for reviewer self-test."
+            exit 0
+          fi
 
           branch="selftest/rev-${RUN_ID}-${RUN_ATTEMPT}"
           git config user.email "reviewer-bot@riddimsoftware.com"
@@ -85,8 +103,11 @@ jobs:
             --json number \
             --jq '.number')"
 
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-          echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "branch=${branch}"
+            echo "created_pr=true"
+            echo "pr_number=${pr_number}"
+          } >> "${GITHUB_OUTPUT}"
           echo "Opened throwaway PR #${pr_number} on branch ${branch}"
 
   invoke-reviewer:
@@ -166,7 +187,7 @@ jobs:
           echo "Assertion passed: ${REVIEWER_STATUS_CHECK} == ${actual}"
 
       - name: Close throwaway PR
-        if: ${{ inputs.cleanup }}
+        if: ${{ inputs.cleanup && needs.setup.outputs.created_pr == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
           REPO: ${{ github.repository }}
@@ -178,7 +199,7 @@ jobs:
             --comment "Closing reviewer workflow self-test PR (cleanup)."
 
       - name: Delete throwaway branch
-        if: ${{ inputs.cleanup }}
+        if: ${{ inputs.cleanup && needs.setup.outputs.created_pr == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT || github.token }}
           REPO: ${{ github.repository }}
