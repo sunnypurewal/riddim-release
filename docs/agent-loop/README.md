@@ -171,11 +171,16 @@ See [`failure-runbook.md`](failure-runbook.md) for diagnosis and recovery steps 
 - `reviewer-agent-passed` check blocked (runner outage)
 - riddim-release `main` broken (blast radius: all consumers)
 
+## E6 pilot preflight
+
+Before running the first epac walking-skeleton pilot, use [`e6-pilot-preflight.md`](e6-pilot-preflight.md). It defines the dependency gates, budget kickoff comment, per-run evidence template, and blocker handoff format for RIDDIM-98.
+
 ---
 
 ## Related resources
 
 - [`e1-checklist.md`](e1-checklist.md) — org-level prerequisites
+- [`e6-pilot-preflight.md`](e6-pilot-preflight.md) — RIDDIM-98 pilot start gates and budget template
 - [`trigger-wrapper-template.yml`](trigger-wrapper-template.yml) — copy into consumer repos
 - [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation
 - [RIDDIM-91](https://riddim.atlassian.net/browse/RIDDIM-91) — parent initiative
