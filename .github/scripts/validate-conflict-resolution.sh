@@ -46,9 +46,52 @@ import pathlib
 import subprocess
 import sys
 
+MARKER_PREFIXES = ("<<<<<<<", "=======", ">>>>>>>")
+
+
+def parse_segments(lines):
+  segments = [[]]
+  segment = []
+  in_conflict = False
+  has_conflict = False
+
+  for line in lines:
+    if line.startswith("<<<<<<<"):
+      segments.append(segment)
+      segment = []
+      has_conflict = True
+      in_conflict = True
+      continue
+    if in_conflict:
+      if line.startswith(">>>>>>>"):
+        in_conflict = False
+      continue
+    if any(line.startswith(prefix) for prefix in MARKER_PREFIXES):
+      continue
+    segment.append(line)
+
+  if in_conflict:
+    print("Pre-resolution snapshot has an unterminated conflict block.", file=sys.stderr)
+    return None, False, True
+
+  segments.append(segment)
+  return segments, has_conflict, False
+
+
+def find_subsequence(haystack, needle, start):
+  if not needle:
+    return start
+  limit = len(haystack) - len(needle) + 1
+  for index in range(start, limit):
+    if haystack[index : index + len(needle)] == needle:
+      return index
+  return -1
+
+
 files_path = pathlib.Path(sys.argv[1])
 snapshot_path = pathlib.Path(sys.argv[2])
 pre_resolution_root = pathlib.Path(sys.argv[3])
+
 allowed = {line.strip() for line in files_path.read_text().splitlines() if line.strip()}
 snapshot = json.loads(snapshot_path.read_text())
 
@@ -57,73 +100,81 @@ staged = subprocess.check_output(["git", "diff", "--cached", "--name-only"], tex
 changed_set = {line.strip() for line in changed + staged if line.strip()}
 extra = sorted(changed_set - allowed)
 if extra:
-    print("Resolution changed files that were not originally conflicted:", file=sys.stderr)
-    for name in extra:
-        print(f"- {name}", file=sys.stderr)
-    sys.exit(1)
+  print("Resolution changed files that were not originally conflicted:", file=sys.stderr)
+  for name in extra:
+    print(f"- {name}", file=sys.stderr)
+  sys.exit(1)
 
 for name, outside_lines in snapshot.items():
-    path = pathlib.Path(name)
-    pre_resolution_path = pre_resolution_root / name
-    if not pre_resolution_path.exists():
-        print(f"Pre-resolution snapshot missing for: {name} (expected: {pre_resolution_path})", file=sys.stderr)
-        sys.exit(1)
-    if not path.exists():
-        print(f"Resolved file was deleted: {name}", file=sys.stderr)
-        sys.exit(1)
+  path = pathlib.Path(name)
+  pre_resolution_path = pre_resolution_root / name
+  if not pre_resolution_path.exists():
+    print(f"Pre-resolution snapshot missing for: {name} (expected: {pre_resolution_path})", file=sys.stderr)
+    sys.exit(1)
+  if not path.exists():
+    print(f"Resolved file was deleted: {name}", file=sys.stderr)
+    sys.exit(1)
 
-    pre_resolution_lines = pre_resolution_path.read_text(errors="replace").splitlines()
-    current = path.read_text(errors="replace").splitlines()
+  pre_resolution_lines = pre_resolution_path.read_text(errors="replace").splitlines()
+  current = path.read_text(errors="replace").splitlines()
+  segments, has_conflict, unterminated = parse_segments(pre_resolution_lines)
+  if segments is None:
+    print(f"Failed to parse conflict markers in pre-resolution snapshot for {name}.", file=sys.stderr)
+    sys.exit(1)
 
-    outside_segments = [[]]
-    in_conflict = False
-    for line in pre_resolution_lines:
-        if line.startswith("<<<<<<<"):
-            in_conflict = True
-            continue
-        if in_conflict:
-            if line.startswith(">>>>>>>"):
-                in_conflict = False
-                outside_segments.append([])
-            continue
-        if any(line.startswith(prefix) for prefix in ("<<<<<<<", "=======", ">>>>>>>")):
-            continue
-        outside_segments[-1].append(line)
+  expected_lines = [line for segment in segments for line in segment]
+  if expected_lines != outside_lines:
+    print(
+      f"Outside snapshot does not match pre-resolution context for {name}.\n"
+      f"  expected: {outside_lines!r}\n"
+      f"  observed: {expected_lines!r}",
+      file=sys.stderr,
+    )
+    sys.exit(1)
 
-    if in_conflict:
-        print(f"Pre-resolution snapshot has an unterminated conflict block in {name}", file=sys.stderr)
-        sys.exit(1)
+  if not has_conflict:
+    if current != pre_resolution_lines:
+      print(f"Non-conflict context changed in {name}: {current!r}", file=sys.stderr)
+      print(f"Expected (snapshot): {pre_resolution_lines!r}", file=sys.stderr)
+      sys.exit(1)
+    continue
 
-    expected_outside = [line for segment in outside_segments for line in segment]
-    if expected_outside != outside_lines:
-        print(f"Outside snapshot does not match pre-resolution context for {name}", file=sys.stderr)
-        sys.exit(1)
+  cursor = 0
+  first_non_empty_index = None
+  last_non_empty_index = None
 
-    def find_segment(lines, segment, start):
-        if not segment:
-            return start
-        limit = len(lines) - len(segment) + 1
-        for index in range(start, max(start, limit)):
-            if lines[index:index + len(segment)] == segment:
-                return index
-        return -1
+  for i, segment in enumerate(segments):
+    if not segment:
+      continue
+    if first_non_empty_index is None:
+      first_non_empty_index = i
+    found = find_subsequence(current, segment, cursor)
+    if found == -1:
+      print(
+        f"Non-conflict context line changed or removed in {name}: {segment!r}",
+        file=sys.stderr,
+      )
+      sys.exit(1)
+    if i == 0 and found > 0:
+      print(f"Out-of-scope changes were prepended to {name}.", file=sys.stderr)
+      sys.exit(1)
+    if found < cursor:
+      print(f"Non-conflict lines are out of order in {name}: {segment!r}", file=sys.stderr)
+      sys.exit(1)
+    cursor = found + len(segment)
+    last_non_empty_index = i
 
-    pos = 0
-    for index, segment in enumerate(outside_segments):
-        if not segment:
-            continue
-        if index == 0:
-            found = 0 if current[:len(segment)] == segment else -1
-        else:
-            found = find_segment(current, segment, pos)
-        if found < 0:
-            print(f"Non-conflict context changed, moved, or had lines inserted in {name}: {segment!r}", file=sys.stderr)
-            sys.exit(1)
-        pos = found + len(segment)
+  if last_non_empty_index is None:
+    continue
 
-    if outside_segments[-1] and pos != len(current):
-        print(f"Non-conflict context changed or lines were inserted after the final conflict in {name}", file=sys.stderr)
-        sys.exit(1)
+  if first_non_empty_index is None:
+    # Entire file was conflicted and now contains only resolver output.
+    continue
+
+  if last_non_empty_index == len(segments) - 1 and segments[-1]:
+    if cursor != len(current):
+      print(f"Non-conflict context changed or appended in {name}.", file=sys.stderr)
+      sys.exit(1)
 
 print("Conflict resolution validation passed.")
 PY

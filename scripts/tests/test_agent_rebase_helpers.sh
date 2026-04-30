@@ -27,6 +27,16 @@ mkdir "$repo"
 git -C "$repo" init -q -b main
 git -C "$repo" config user.email test@example.com
 git -C "$repo" config user.name Test
+
+current_branch="$(git -C "$repo" branch --show-current)"
+if [ "$current_branch" != "main" ]; then
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/main"; then
+    git -C "$repo" checkout -q main
+  else
+    git -C "$repo" branch -m main
+  fi
+fi
+
 cat > "$repo/file.txt" <<'BASE'
 alpha
 context
