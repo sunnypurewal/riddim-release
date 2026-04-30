@@ -179,14 +179,19 @@ When in doubt, wait for the outage to resolve. A stuck PR is recoverable; a bad 
    Or via API (requires `repo` scope + admin access):
    ```bash
    # Read current required checks first — do not lose existing checks
-   CHECKS=$(gh api /repos/<owner>/<repo>/branches/main/protection \
-     --jq '.required_status_checks.contexts | map(select(. != "reviewer-agent-passed")) | @json')
-   echo "Remaining checks after removal: $CHECKS"
+   CHECKS_WITH_REVIEWER_AGENT=$(gh api /repos/<owner>/<repo>/branches/main/protection \
+     --jq '.required_status_checks.contexts')
+   CHECKS_WITHOUT_REVIEWER_AGENT=$(gh api /repos/<owner>/<repo>/branches/main/protection \
+     --jq '.required_status_checks.contexts | map(select(. != "reviewer-agent-passed"))')
+   echo "Remaining checks after removal: $CHECKS_WITHOUT_REVIEWER_AGENT"
 
    # Update protection rule with reviewer-agent-passed removed
    gh api --method PATCH /repos/<owner>/<repo>/branches/main/protection/required_status_checks \
-     --field "strict=false" \
-     --field "contexts=${CHECKS}"
+     --input - <<JSON
+   {"strict":false,"contexts":${CHECKS_WITHOUT_REVIEWER_AGENT}}
+JSON
+
+   # Keep full restored set for step 6
    ```
 
 5. **Merge manually with squash:**
@@ -198,9 +203,9 @@ When in doubt, wait for the outage to resolve. A stuck PR is recoverable; a bad 
 6. **Restore branch protection immediately after merge:**
    ```bash
    gh api --method PATCH /repos/<owner>/<repo>/branches/main/protection/required_status_checks \
-     --field "strict=true" \
-     --field "contexts[]=reviewer-agent-passed" \
-     --field "contexts[]=ci"  # Re-add any other required checks removed in step 4
+     --input - <<JSON
+   {"strict":true,"contexts":${CHECKS_WITH_REVIEWER_AGENT}}
+JSON
    ```
 
 7. **Verify protection is restored:**
