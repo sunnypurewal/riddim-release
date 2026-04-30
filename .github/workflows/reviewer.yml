@@ -183,7 +183,7 @@ jobs:
           echo "guard_exit_code=${status}"
 
       - name: Mark PR for human review when guard blocks
-        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        if: ${{ steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code != '0' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -210,7 +210,7 @@ jobs:
           echo "Guard blocked autonomous review; skipping reviewer agent."
 
       - name: Emit reviewer-agent-passed failure when guard blocks
-        if: ${{ steps.guard.outputs.exit_code != '0' }}
+        if: ${{ steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code != '0' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
@@ -244,7 +244,7 @@ jobs:
           exit 1
 
       - name: Checkout caller PR workspace
-        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
@@ -253,7 +253,7 @@ jobs:
           token: ${{ secrets.REVIEWER_BOT_PAT }}
 
       - name: Load reviewer prompt
-        if: ${{ steps.guard.outputs.exit_code == '0' }}
+        if: ${{ steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         id: reviewer_prompt
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -274,7 +274,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Validate reviewer prompt for act
-        if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ env.ACT == 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         env:
           REVIEWER_PROMPT: ${{ steps.reviewer_prompt.outputs.prompt }}
         run: |
@@ -295,7 +295,7 @@ jobs:
           echo "Reviewer prompt loaded and contains required verdict instructions."
 
       - name: Run reviewer agent
-        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
@@ -308,7 +308,7 @@ jobs:
           prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
 
       - name: Resolve reviewer verdict
-        if: ${{ always() && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ always() && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         id: reviewer_verdict
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
@@ -357,7 +357,7 @@ jobs:
           echo "Resolved reviewer verdict: ${verdict}"
 
       - name: Emit reviewer-agent-passed status check
-        if: ${{ always() && steps.guard.outputs.exit_code == '0' }}
+        if: ${{ always() && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
@@ -401,7 +401,7 @@ jobs:
       # Possible mergeable_state values: clean, dirty, blocked, behind,
       # unstable, draft, unknown.
       - name: Pre-merge mergeable_state re-check
-        if: ${{ steps.reviewer_verdict.outputs.verdict == 'APPROVED' && steps.guard.outputs.exit_code == '0' && inputs.mock_reviewer_verdict == '' }}
+        if: ${{ steps.reviewer_verdict.outputs.verdict == 'APPROVED' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' && inputs.mock_reviewer_verdict == '' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_NUMBER: ${{ inputs.pr_number }}
