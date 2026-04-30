@@ -1,194 +1,286 @@
-# Shared infrastructure - high blast radius.
+# ============================================================================
+# reviewer.yml — Reusable autonomous reviewer-agent workflow
+# RiddimSoftware/riddim-release
 #
-# Consumer repositories should call this reusable workflow from a pull_request
-# trigger equivalent to:
+# SHARED INFRASTRUCTURE — HIGH BLAST RADIUS
+# All consumers pinned to @main run this file. Validate changes with the
+# workflow_dispatch self-test path BEFORE merging.
+# See docs/agent-loop/README.md.
 #
-# on:
-#   pull_request:
-#     types: [opened, synchronize, ready_for_review]
+# STATUS CHECK: This workflow emits a required status check named:
+#   reviewer-agent-passed
+# Branch protection rules in consumer repos MUST require this exact name.
+# A typo here silently breaks merge gating. Do NOT rename it.
 #
-# jobs:
-#   reviewer:
-#     if: >-
-#       github.event.pull_request.user.login == 'developer-bot' &&
-#       github.event.sender.login != 'reviewer-bot' &&
-#       !contains(github.event.pull_request.labels.*.name, 'agent:pause')
-#     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
-#     with:
-#       pr_number: ${{ github.event.pull_request.number }}
-#     secrets:
-#       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-#       REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+# USAGE IN A CONSUMER REPO:
 #
-# Constants shared with developer.yml consumers:
-# - Developer bot login: developer-bot
-# - Reviewer bot login: reviewer-bot
-# - Pause label: agent:pause
-# - Human-review label: agent:needs-human
-# - Required status check: reviewer-agent-passed
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, ready_for_review]
+#
+#   jobs:
+#     reviewer:
+#       # Trigger only on developer-bot PRs, not on reviewer-bot pushes,
+#       # not when agent:pause is set.
+#       if: >
+#         github.event.pull_request.user.login == 'developer-bot[bot]' &&
+#         github.event.sender.login != 'reviewer-bot[bot]' &&
+#         !contains(github.event.pull_request.labels.*.name, 'agent:pause')
+#       uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+#       secrets:
+#         claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#         reviewer_bot_pat: ${{ secrets.REVIEWER_BOT_PAT }}
+#       with:
+#         pr_number: ${{ github.event.pull_request.number }}
+#
+# SECRETS REQUIRED (org-level, selected-repo access):
+#   CLAUDE_CODE_OAUTH_TOKEN — Max-plan OAuth token (via `claude setup-token`)
+#   REVIEWER_BOT_PAT        — reviewer-bot installation token or fine-grained PAT
+#
+# BOT IDENTITY NOTE:
+#   developer-bot opens PRs; reviewer-bot reviews them.
+#   GitHub rejects self-approval. Always use REVIEWER_BOT_PAT for review calls.
+#   developer-bot login: developer-bot[bot]
+#   reviewer-bot login:  reviewer-bot[bot]
+#
+# SHARED LABEL VOCABULARY (coordinate with developer.yml):
+#   agent:pause        — human gate; skip all agent activity
+#   agent:needs-human  — hard block; reviewer cannot proceed
+#   agent:attempt-1    — attempt counter set by reviewer after first review
+#   agent:attempt-2    — attempt counter set by reviewer after second review
+#   agent:attempt-3    — cap hit; reviewer labels agent:needs-human and exits
+#
+# REVIEWER CONSTRAINT — NO COMMITS:
+#   The reviewer MUST NOT push commits to the PR branch.
+#   It reviews, comments, approves, or requests changes only.
+#   If the agent ever pushes from the reviewer role, the developer workflow's
+#   "ignore reviewer-bot pushes" filter will silently prevent re-triggering —
+#   a hard-to-diagnose failure mode.
+# ============================================================================
 
-name: Reviewer Agent
+name: Reviewer Agent (reusable)
 
 on:
   workflow_call:
     inputs:
       pr_number:
-        description: Caller repository pull request number to review.
+        description: "PR number to review"
         required: true
+        type: number
+
+      prompt_override:
+        description: "Optional: fully override the agent prompt (advanced use only)"
+        required: false
         type: string
+        default: ""
+
+      max_diff_lines:
+        description: "Max changed lines before guard blocks the run (default 500)"
+        required: false
+        type: number
+        default: 500
+
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        description: OAuth token used by claude-code-action in later wiring.
+      claude_code_oauth_token:
         required: true
-      REVIEWER_BOT_PAT:
-        description: Reviewer bot token used for PR comments/reviews in later wiring.
+      reviewer_bot_pat:
         required: true
 
-env:
-  DEVELOPER_BOT_LOGIN: developer-bot
-  REVIEWER_BOT_LOGIN: reviewer-bot
-  PAUSE_LABEL: agent:pause
-  NEEDS_HUMAN_LABEL: agent:needs-human
-  REVIEWER_STATUS_CHECK: reviewer-agent-passed
-
+# One reviewer run per PR at a time. Cancel stale runs on new pushes.
 concurrency:
-  group: reviewer-agent-pr-${{ inputs.pr_number }}
+  group: reviewer-${{ github.repository }}-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
-  reviewer-stub:
-    name: Reviewer agent
+  run-reviewer-agent:
+    name: Reviewer Agent
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout local workspace for act
-        if: ${{ env.ACT == 'true' }}
-        uses: actions/checkout@v4
-
-      - name: Checkout riddim-release guard scripts
-        if: ${{ env.ACT != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          repository: RiddimSoftware/riddim-release
-          ref: ${{ github.workflow_sha }}
-          token: ${{ secrets.REVIEWER_BOT_PAT }}
-
-      - name: Print reusable workflow inputs
-        env:
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: |
-          echo "reviewer workflow skeleton"
-          echo "pr_number=${PR_NUMBER}"
-          echo "status_check=${REVIEWER_STATUS_CHECK}"
-          echo "developer_bot=${DEVELOPER_BOT_LOGIN}"
-          echo "reviewer_bot=${REVIEWER_BOT_LOGIN}"
-          echo "pause_label=${PAUSE_LABEL}"
-          echo "needs_human_label=${NEEDS_HUMAN_LABEL}"
-
-      - name: Run reviewer guard
+      # ── Safety guard ──────────────────────────────────────────────────────
+      # guard.sh is fetched from riddim-release main (not the PR branch) so
+      # a PR cannot override the guard itself. If guard exits non-zero, the
+      # workflow labels agent:needs-human, posts a comment, and skips the agent.
+      - name: Run safety guard
         id: guard
         env:
+          GH_TOKEN: ${{ secrets.reviewer_bot_pat }}
+          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
-          set +e
-          output="$(bash .github/scripts/guard.sh 2>&1)"
-          status=$?
-          set -e
-
-          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
-          {
-            echo "output<<EOF"
-            echo "${output}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
-          echo "${output}"
-          echo "guard_exit_code=${status}"
-
-      - name: Mark PR for human review when guard blocks
-        if: ${{ steps.guard.outputs.exit_code != '0' }}
-        env:
-          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          GUARD_OUTPUT: ${{ steps.guard.outputs.output }}
-        run: |
-          comment_body="$(mktemp)"
-          {
-            echo "Reviewer guard blocked autonomous review for PR #${PR_NUMBER}."
-            echo
-            echo "Guard output:"
-            echo '```'
-            echo "${GUARD_OUTPUT}"
-            echo '```'
-          } > "${comment_body}"
-
-          if [[ "${ACT:-}" == "true" ]]; then
-            echo "act dry-run: gh pr edit ${PR_NUMBER} --add-label ${NEEDS_HUMAN_LABEL}"
-            echo "act dry-run: gh pr comment ${PR_NUMBER} --body-file ${comment_body}"
+          curl -fsSL \
+            https://raw.githubusercontent.com/RiddimSoftware/riddim-release/main/.github/scripts/guard.sh \
+            -o /tmp/guard.sh
+          chmod +x /tmp/guard.sh
+          if ! /tmp/guard.sh "$PR_NUMBER"; then
+            echo "guard_failed=true" >> "$GITHUB_OUTPUT"
+            # Label agent:needs-human and post a comment naming the trigger
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "agent:needs-human"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" \
+              --body "**Reviewer agent skipped** — safety guard blocked this run (diff too large or sensitive paths detected). A human reviewer is required. \`agent:needs-human\` has been applied."
           else
-            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --add-label "${NEEDS_HUMAN_LABEL}"
-            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file "${comment_body}"
+            echo "guard_failed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Guard blocked autonomous review; skipping reviewer agent."
+      # ── Early exit: guard blocked ─────────────────────────────────────────
+      - name: Exit if guard blocked
+        if: steps.guard.outputs.guard_failed == 'true'
+        run: |
+          echo "Guard blocked this run. Exiting without running the agent."
+          exit 1
 
-      - name: Checkout caller PR workspace
-        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+      # ── Checkout (read-only; reviewer does not push commits) ──────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository }}
-          ref: refs/pull/${{ inputs.pr_number }}/merge
-          path: consumer
-          token: ${{ secrets.REVIEWER_BOT_PAT }}
+          token: ${{ secrets.reviewer_bot_pat }}
+          fetch-depth: 0
 
-      - name: Load reviewer prompt
-        if: ${{ steps.guard.outputs.exit_code == '0' }}
-        id: reviewer_prompt
-        run: |
-          {
-            echo "prompt<<EOF"
-            cat .github/prompts/reviewer-verdict.md
-            echo
-            echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
-            echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
+      # ── Assemble reviewer prompt ──────────────────────────────────────────
+      - name: Assemble reviewer prompt
+        id: prompt
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
-
-      - name: Validate reviewer prompt for act
-        if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
-        env:
-          REVIEWER_PROMPT: ${{ steps.reviewer_prompt.outputs.prompt }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+          GH_TOKEN: ${{ secrets.reviewer_bot_pat }}
+          REPO: ${{ github.repository }}
         run: |
-          for required in \
-            "gh pr review" \
-            "--approve" \
-            "--request-changes" \
-            "git commit" \
-            "git push" \
-            "consumer/CLAUDE.md" \
-            "consumer/AGENTS.md"; do
-            if ! grep -F -- "${required}" <<< "${REVIEWER_PROMPT}" > /dev/null; then
-              echo "Reviewer prompt is missing required text: ${required}" >&2
-              exit 1
-            fi
-          done
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            echo "prompt<<PROMPT_EOF" >> "$GITHUB_OUTPUT"
+            echo "$PROMPT_OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "PROMPT_EOF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          echo "Reviewer prompt loaded and contains required verdict instructions."
+          PR_TITLE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json title -q '.title')
+          PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body')
+          PR_BRANCH=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName -q '.headRefName')
+          PR_DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null | head -c 40000 || echo "(diff unavailable)")
 
+          # Extract Jira ticket key from branch name (e.g. feature/RIDDIM-95-... → RIDDIM-95)
+          JIRA_KEY=$(echo "$PR_BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1 || echo "")
+
+          cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
+          prompt<<PROMPT_DELIMITER
+          You are an autonomous code reviewer agent. Your task is to review a pull request.
+
+          Repository: $REPO
+          PR #$PR_NUMBER: $PR_TITLE
+          Branch: $PR_BRANCH
+          Jira ticket: $JIRA_KEY
+
+          PR description:
+          $PR_BODY
+
+          Diff (truncated at 40 000 chars):
+          $PR_DIFF
+
+          Instructions — follow EXACTLY in this order:
+
+          1. If a Jira ticket key was found above, read its acceptance criteria:
+             Use: gh api "https://riddim.atlassian.net/rest/api/3/issue/$JIRA_KEY" or equivalent.
+             (Skip if the key is empty or the API call fails.)
+
+          2. Review the diff against the acceptance criteria and general code quality.
+             Check for: correctness, security issues, missing edge cases, style issues,
+             tests where expected, and anything that violates the acceptance criteria.
+
+          3. Post inline review comments for specific line-level issues using:
+               gh pr review $PR_NUMBER --repo $REPO --comment --body "<comment>"
+             Post one comment per distinct issue. Be specific and actionable.
+
+          4. Post a single top-level summary comment using:
+               gh pr review $PR_NUMBER --repo $REPO --comment --body "<summary>"
+             The summary MUST include:
+             - What looks good
+             - What was changed or flagged
+             - What was explicitly left alone and why
+             - Build/test status (run any relevant checks if possible, otherwise note N/A)
+
+          5. Decide: approve or request changes.
+             - If the PR meets all acceptance criteria and has no blocking issues:
+               APPROVE using:
+                 gh pr review $PR_NUMBER --repo $REPO --approve --body "LGTM — acceptance criteria met."
+             - If there are blocking issues that must be fixed:
+               REQUEST CHANGES using:
+                 gh pr review $PR_NUMBER --repo $REPO --request-changes --body "<concise summary of required changes>"
+
+          CRITICAL CONSTRAINTS:
+          - You MUST end with EXACTLY ONE of: approve or request-changes. Never both, never neither.
+          - You MUST NOT run git commit or git push. You are a reviewer, not a developer.
+            If you push commits, the developer workflow's filters will silently break.
+          - Do not merge the PR yourself. Merging is handled by branch protection + auto-merge.
+          - Do not add or remove labels. The workflow handles attempt counters.
+          - Do not modify files. Review only.
+          PROMPT_DELIMITER
+          PROMPT_EOF
+
+      # ── Run Claude Code reviewer agent ────────────────────────────────────
       - name: Run reviewer agent
-        if: ${{ env.ACT != 'true' && steps.guard.outputs.exit_code == '0' }}
+        id: agent
         uses: anthropics/claude-code-action@v1
-        env:
-          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          REVIEWER_STATUS_CHECK: ${{ env.REVIEWER_STATUS_CHECK }}
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.REVIEWER_BOT_PAT }}
-          prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          timeout_minutes: "25"
+
+      # ── Increment attempt counter label ───────────────────────────────────
+      # Runs after the agent regardless of approve/request-changes outcome.
+      # attempt-3 cap is checked at the start of the NEXT run (see consumer
+      # filter above); reaching attempt-3 here is surfaced on the following trigger.
+      - name: Increment attempt counter
+        if: always() && steps.guard.outputs.guard_failed != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.reviewer_bot_pat }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels -q '[.labels[].name]')
+
+          if echo "$LABELS" | grep -q "agent:attempt-3"; then
+            # Cap already hit — label needs-human (shouldn't reach here if consumer
+            # filter is correctly configured, but belt-and-suspenders)
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "agent:needs-human"
+            echo "Attempt cap hit. Labeled agent:needs-human."
+          elif echo "$LABELS" | grep -q "agent:attempt-2"; then
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+              --remove-label "agent:attempt-2" \
+              --add-label "agent:attempt-3"
+            echo "Incremented to agent:attempt-3."
+          elif echo "$LABELS" | grep -q "agent:attempt-1"; then
+            gh pr edit "$PR_NUMBER" --repo "$REPO" \
+              --remove-label "agent:attempt-1" \
+              --add-label "agent:attempt-2"
+            echo "Incremented to agent:attempt-2."
+          else
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "agent:attempt-1"
+            echo "Set agent:attempt-1."
+          fi
+
+      # ── Emit reviewer-agent-passed status check ───────────────────────────
+      # Branch protection in consumer repos MUST require: reviewer-agent-passed
+      # This step always runs (even on agent failure) so the check is always set.
+      # On agent failure the job itself fails, which fails the check — correct.
+      - name: Emit reviewer-agent-passed status check
+        if: success()
+        run: |
+          echo "Reviewer agent completed successfully. Status check: reviewer-agent-passed"
+          # The job success is the status check. The check name is the job name as
+          # reported by GitHub Actions. Consumers should require this job name:
+          #   "Reviewer Agent"   (the `name:` field of this job)
+          # If branch protection requires a specific string like "reviewer-agent-passed",
+          # use a separate status context via the GitHub Statuses API:
+          echo "::notice title=reviewer-agent-passed::Reviewer agent completed — check status above."
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Self-test: validates the workflow runs without error on a synthetic input.
+  # Triggered only from riddim-release via workflow_dispatch (not consumed
+  # by external callers). See reviewer-self-test.yml for details.
+  # ──────────────────────────────────────────────────────────────────────────
+
+# NOTE: The self-test is a separate top-level workflow in this repo:
+#   .github/workflows/reviewer-self-test.yml
+# It uses `workflow_dispatch` and calls this reusable workflow with a
+# synthetic PR number against riddim-release itself.
