@@ -50,6 +50,11 @@ on:
         required: false
         type: string
         default: main
+      rebase_max_attempts:
+        description: "Maximum total rebase attempts before agent:needs-human"
+        required: false
+        type: number
+        default: 3
 
   workflow_call:
     inputs:
@@ -69,6 +74,10 @@ on:
         required: false
         type: string
         default: main
+      rebase_max_attempts:
+        required: false
+        type: number
+        default: 3
     secrets:
       dev_bot_pat:
         required: true
@@ -112,91 +121,69 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Rebase guard — attempt counter check
-        id: guard
+      - name: Checkout riddim-release guard scripts
         if: steps.pause-check.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
-          CONSUMER_REPO: ${{ inputs.consumer_repo }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          REBASE_MAX_ATTEMPTS: "3"
-        run: |
-          set -euo pipefail
-          MARKER="<!-- riddim:watcher-status -->"
-          OWNER="${CONSUMER_REPO%%/*}"
-          REPO="${CONSUMER_REPO##*/}"
-
-          labels="$(gh pr view "$PR_NUMBER" --repo "$CONSUMER_REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)"
-
-          current_attempt=0
-          while IFS= read -r label; do
-            case "$label" in
-              agent:rebase-attempt-*)
-                n="${label#agent:rebase-attempt-}"
-                if [[ "$n" =~ ^[0-9]+$ ]] && (( n > current_attempt )); then
-                  current_attempt="$n"
-                fi
-                ;;
-            esac
-          done <<< "$labels"
-
-          if (( current_attempt >= REBASE_MAX_ATTEMPTS )); then
-            echo "decision=attempt-cap-exceeded" >> "$GITHUB_OUTPUT"
-            echo "::warning::Attempt cap reached (${current_attempt}/${REBASE_MAX_ATTEMPTS}). Applying agent:needs-human."
-            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "agent:needs-human" >/dev/null 2>&1 || true
-
-            # Upsert watcher-status comment
-            TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            BODY="${MARKER}
-          **Last watcher run:** ${TIMESTAMP}
-          **State:** guard-blocked
-          **Action:** agent:needs-human applied (attempt cap ${current_attempt}/${REBASE_MAX_ATTEMPTS})"
-            existing_id="$(gh api "repos/${CONSUMER_REPO}/issues/${PR_NUMBER}/comments" \
-              --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null | tail -n 1 || true)"
-            if [[ -n "$existing_id" ]]; then
-              gh api --method PATCH "/repos/${CONSUMER_REPO}/issues/comments/${existing_id}" \
-                --field "body=${BODY}" >/dev/null 2>&1 || true
-            else
-              gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$BODY" >/dev/null 2>&1 || true
-            fi
-            exit 0
-          fi
-
-          # Increment attempt label
-          next_attempt=$((current_attempt + 1))
-          if (( current_attempt > 0 )); then
-            gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" \
-              --remove-label "agent:rebase-attempt-${current_attempt}" >/dev/null 2>&1 || true
-          fi
-          gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" \
-            --add-label "agent:rebase-attempt-${next_attempt}" >/dev/null 2>&1 || true
-
-          echo "decision=ok" >> "$GITHUB_OUTPUT"
-          echo "Guard passed: attempt ${next_attempt}/${REBASE_MAX_ATTEMPTS}."
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: main
+          token: ${{ secrets.dev_bot_pat || github.token }}
+          path: riddim-release
 
       - name: Clone consumer repo as developer-bot
-        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
+        if: steps.pause-check.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.consumer_repo }}
           ref: ${{ inputs.pr_branch }}
           token: ${{ secrets.dev_bot_pat }}
           fetch-depth: 0
+          path: consumer
 
       - name: Configure git identity (developer-bot)
-        if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
+        if: steps.pause-check.outputs.skip != 'true'
+        working-directory: consumer
         run: |
           git config user.name "developer-bot"
           git config user.email "developer-bot@users.noreply.github.com"
 
+      - name: Run attempt guard
+        if: steps.pause-check.outputs.skip != 'true'
+        id: guard
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
+          REBASE_INCREMENT_ATTEMPT: "true"
+          REBASE_MAX_ATTEMPTS: ${{ inputs.rebase_max_attempts || 3 }}
+        run: |
+          set -euo pipefail
+          output="$(bash ../riddim-release/.github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "${{ inputs.consumer_repo }}")"
+          decision="$(head -n 1 <<< "$output")"
+          reason_json="$(tail -n 1 <<< "$output")"
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+          {
+            echo "reason_json<<EOF"
+            echo "$reason_json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "$output"
+
+      - name: Stop when attempt guard blocks
+        if: steps.guard.outputs.decision != 'ok'
+        run: |
+          echo "Rebase guard decision: ${{ steps.guard.outputs.decision }}"
+          echo '${{ steps.guard.outputs.reason_json }}'
+
       - name: Fetch base branch
         if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
+        working-directory: consumer
         run: |
           git fetch origin "${{ inputs.base_branch }}"
 
       - name: Verify PR head SHA matches expected (anti-clobber)
         if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         id: sha-check
+        working-directory: consumer
         env:
           EXPECTED_SHA: ${{ inputs.pr_head_sha }}
           PR_BRANCH: ${{ inputs.pr_branch }}
@@ -214,6 +201,7 @@ jobs:
       - name: Rebase onto base branch
         if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok'
         id: rebase
+        working-directory: consumer
         env:
           BASE_BRANCH: ${{ inputs.base_branch }}
         run: |
@@ -232,6 +220,7 @@ jobs:
 
       - name: Push rebased branch (force-with-lease)
         if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok' && steps.rebase.outputs.rebase_failed != 'true'
+        working-directory: consumer
         env:
           PR_BRANCH: ${{ inputs.pr_branch }}
           EXPECTED_HEAD: ${{ inputs.pr_head_sha }}
@@ -255,24 +244,28 @@ jobs:
         run: |
           set -euo pipefail
           gh pr edit "$PR_NUMBER" --repo "$CONSUMER_REPO" --add-label "agent:rebase-failed" 2>/dev/null || true
-          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "**Auto-Rebase failed** — unexpected merge conflicts on a \`behind\`-state PR.
+          body="$(cat <<BODY
+          **Auto-Rebase failed** - unexpected merge conflicts on a \`behind\`-state PR.
 
-This should not happen. It likely means:
-- The watcher classified the PR as \`behind\` but main moved before \`git rebase\` ran, OR
-- The PR's base branch was updated non-linearly.
+          This should not happen. It likely means:
+          - The watcher classified the PR as \`behind\` but main moved before \`git rebase\` ran, OR
+          - The PR's base branch was updated non-linearly.
 
-**Do not re-trigger the mechanical rebase.** This PR needs human review to understand the conflict.
+          **Do not re-trigger the mechanical rebase.** This PR needs human review to understand the conflict.
 
-Diagnostics:
-- PR branch: \`${PR_BRANCH}\`
-- Base branch: \`${BASE_BRANCH}\`
-- Watcher run: ${RUN_URL}
+          Diagnostics:
+          - PR branch: \`${PR_BRANCH}\`
+          - Base branch: \`${BASE_BRANCH}\`
+          - Watcher run: ${RUN_URL}
 
-To recover:
-1. Remove the \`agent:rebase-failed\` label once you've investigated.
-2. Manually resolve conflicts and push, or close + refile with a clean branch.
+          To recover:
+          1. Remove the \`agent:rebase-failed\` label once you've investigated.
+          2. Manually resolve conflicts and push, or close + refile with a clean branch.
 
-cc @SunnyPurewal" 2>/dev/null || true
+          cc @SunnyPurewal
+          BODY
+          )"
+          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$body" 2>/dev/null || true
 
       - name: Handle force-with-lease rejection
         if: failure() && steps.rebase.outputs.rebase_failed != 'true' && steps.pause-check.outputs.skip != 'true'
@@ -285,20 +278,23 @@ cc @SunnyPurewal" 2>/dev/null || true
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "**Auto-Rebase skipped** — PR head changed since the watcher classified it.
+          body="$(cat <<BODY
+          **Auto-Rebase skipped** - PR head changed since the watcher classified it.
 
-A concurrent push (human or another agent run) pushed to \`${PR_BRANCH}\` after the watcher snapshot was taken. The rebase was aborted to avoid overwriting that work.
+          A concurrent push (human or another agent run) pushed to \`${PR_BRANCH}\` after the watcher snapshot was taken. The rebase was aborted to avoid overwriting that work.
 
-The next watcher run (triggered by the concurrent push or the 15-minute cron) will re-classify and retry if still needed.
+          The next watcher run (triggered by the concurrent push or the 15-minute cron) will re-classify and retry if still needed.
 
-Diagnostics:
-- Expected head: \`${EXPECTED_HEAD}\`
-- Watcher run: ${RUN_URL}" 2>/dev/null || true
+          Diagnostics:
+          - Expected head: \`${EXPECTED_HEAD}\`
+          - Watcher run: ${RUN_URL}
+          BODY
+          )"
+          gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$body" 2>/dev/null || true
 
-      - name: Log completion and update watcher status
+      - name: Log completion
         if: steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.decision == 'ok' && steps.rebase.outputs.rebase_failed != 'true'
         env:
-          GH_TOKEN: ${{ secrets.dev_bot_pat || github.token }}
           CONSUMER_REPO: ${{ inputs.consumer_repo }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_BRANCH: ${{ inputs.pr_branch }}
@@ -308,19 +304,3 @@ Diagnostics:
           echo "  PR: ${CONSUMER_REPO}#${PR_NUMBER}"
           echo "  Branch: ${PR_BRANCH} rebased onto origin/${BASE_BRANCH}"
           echo "  A pull_request[synchronize] event will trigger the reviewer workflow downstream."
-
-          # Upsert watcher-status comment
-          MARKER="<!-- riddim:watcher-status -->"
-          TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          BODY="${MARKER}
-**Last watcher run:** ${TIMESTAMP}
-**State:** rebased
-**Action:** pushed fast-forward rebase onto ${BASE_BRANCH}"
-          existing_id="$(gh api "repos/${CONSUMER_REPO}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null | tail -n 1 || true)"
-          if [[ -n "$existing_id" ]]; then
-            gh api --method PATCH "/repos/${CONSUMER_REPO}/issues/comments/${existing_id}" \
-              --field "body=${BODY}" >/dev/null 2>&1 || true
-          else
-            gh pr comment "$PR_NUMBER" --repo "$CONSUMER_REPO" --body "$BODY" >/dev/null 2>&1 || true
-          fi
