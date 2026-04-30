@@ -59,11 +59,11 @@ step_labels() {
 
   declare -A LABELS=(
     ["agent:build"]="0075ca|PR opened by developer-bot"
-    ["agent:pause"]="d73a4a|Kill switch: stops the loop"
-    ["agent:needs-human"]="e4e669|Reviewer blocked, needs human"
-    ["agent:attempt-1"]="cfd3d7|Agent attempt 1 of 3"
-    ["agent:attempt-2"]="cfd3d7|Agent attempt 2 of 3"
-    ["agent:attempt-3"]="cfd3d7|Agent attempt 3 of 3 (cap hit)"
+    ["agent:pause"]="e11d48|Kill switch: stops the loop"
+    ["agent:needs-human"]="f97316|Reviewer blocked, needs human"
+    ["agent:attempt-1"]="6b7280|Agent attempt 1 of 3"
+    ["agent:attempt-2"]="6b7280|Agent attempt 2 of 3"
+    ["agent:attempt-3"]="6b7280|Agent attempt 3 of 3 (cap hit)"
   )
 
   for repo in "${REPOS[@]}"; do
