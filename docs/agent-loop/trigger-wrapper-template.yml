@@ -1,0 +1,120 @@
+# Autonomous PR Loop — trigger wrapper for consumer repositories
+#
+# Copy this file to <your-repo>/.github/workflows/agent-loop.yml.
+# Keep this file thin: consumer repos own event filtering, repo-local build/test
+# inputs, and secret inheritance. Bot prompts, guards, PR creation, review, and
+# stale-PR routing stay centralized in RiddimSoftware/riddim-release.
+#
+# Trigger surface:
+# - Jira label `agent:pr` -> Jira Automation -> repository_dispatch:jira-ticket-ready
+# - GitHub Issues are not used as the autonomous-loop entry point.
+#
+# Required org secrets with selected-repository access to this repo:
+# - CLAUDE_CODE_OAUTH_TOKEN
+# - DEV_BOT_APP_ID
+# - DEV_BOT_PRIVATE_KEY
+# - REVIEWER_BOT_APP_ID
+# - REVIEWER_BOT_PRIVATE_KEY
+# - DEV_BOT_PAT (rebase-watcher only)
+#
+# Required PR labels on this repo:
+# - autonomous                added by create-pr.yml; enrolls PR in the loop
+# - automate                  compatibility label for automation follow-up
+# - agent:pause               suppresses reviewer/developer automation
+# - agent:needs-human         marks work that should stay with a person
+# - agent:attempt-1/2/3       developer fix-up retry budget
+# - agent:rebase-attempt-1/2/3 stale-PR rebase retry budget
+# - agent:rebase-failed       marks exhausted or failed rebase recovery
+#
+# Required branch protection on main:
+# - require repo build/test checks
+# - require reviewer-agent-passed
+# - require stale-review dismissal and CODEOWNERS review
+
+name: Autonomous PR Loop
+
+on:
+  repository_dispatch:
+    types: [jira-ticket-ready]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  checks: write
+  issues: write
+
+jobs:
+  # Entry point: Jira ticket tagged agent:pr.
+  # Payload fields: jira_ticket, jira_summary, branch (optional), jira_url (optional).
+  create-pr-from-jira:
+    name: Create PR from Jira ticket
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'jira-ticket-ready'
+    uses: RiddimSoftware/riddim-release/.github/workflows/create-pr.yml@main
+    with:
+      jira_ticket: ${{ github.event.client_payload.jira_ticket }}
+      jira_summary: ${{ github.event.client_payload.jira_summary }}
+      branch: ${{ github.event.client_payload.branch || '' }}
+      jira_url: ${{ github.event.client_payload.jira_url || '' }}
+    secrets:
+      dev_bot_app_id: ${{ secrets.DEV_BOT_APP_ID }}
+      dev_bot_private_key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
+
+  # Fix-up: reviewer requested changes on an automation-owned PR.
+  developer-fixup:
+    name: Developer agent from reviewer changes requested
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'changes_requested' &&
+      contains(github.event.review.user.login, 'riddim-reviewer-bot') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:attempt-3')
+    uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
+    with:
+      trigger_type: changes_requested
+      pr_number: ${{ github.event.pull_request.number }}
+      review_comments: ${{ github.event.review.body || '' }}
+    secrets:
+      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      DEV_BOT_APP_ID: ${{ secrets.DEV_BOT_APP_ID }}
+      DEV_BOT_PRIVATE_KEY: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
+
+  # Reviewer: runs when developer-bot opens or updates a PR.
+  reviewer:
+    name: Reviewer agent for developer PR
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'ready_for_review') &&
+      contains(github.event.pull_request.user.login, 'riddim-developer-bot') &&
+      !contains(github.event.sender.login, 'riddim-reviewer-bot') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
+    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      REVIEWER_BOT_APP_ID: ${{ secrets.REVIEWER_BOT_APP_ID }}
+      REVIEWER_BOT_PRIVATE_KEY: ${{ secrets.REVIEWER_BOT_PRIVATE_KEY }}
+
+  # Rebase watcher: detects stale PRs on push / schedule / manual scan.
+  rebase-watcher:
+    name: Detect and route stale PRs for rebase
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    uses: RiddimSoftware/riddim-release/.github/workflows/rebase-watcher.yml@main
+    with:
+      consumer_repo: ${{ github.repository }}
+      # base_branch defaults to main.
+      # autonomous_label defaults to autonomous.
+    secrets:
+      dev_bot_pat: ${{ secrets.DEV_BOT_PAT }}
