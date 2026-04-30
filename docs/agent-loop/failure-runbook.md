@@ -1,6 +1,6 @@
 # Autonomous PR Loop — Failure Runbook
 
-> **Last verified against `riddim-release@4eb3b6e` on 2026-04-30.**
+> Last verified against riddim-release@main on 2026-04-30.
 > Update this header whenever a material workflow change lands in riddim-release.
 
 Quick reference for diagnosing and recovering from failures in the autonomous PR loop. Each section states the symptom, diagnosis steps, and recovery action.
@@ -193,3 +193,71 @@ Common guard decisions:
 2. Rebase locally and resolve conflicts manually.
 3. Push the resolved branch.
 4. Remove `agent:needs-human`, `agent:pause`, and any `agent:rebase-attempt-*` labels only after the branch is safe to return to automation.
+
+---
+
+## 6. Common failure modes from E6 pilot
+
+These failure modes were confirmed in the E6 pilot on `RiddimSoftware/epac`. Each one looks alarming but has a known, non-destructive resolution.
+
+### `startup_failure` on reviewer job for human-opened PRs
+
+**Symptom:** The reviewer workflow shows `startup_failure` or exits immediately for PRs opened by a human account.
+
+**Cause:** This is expected. The reviewer job has an `if:` condition that checks `github.event.pull_request.user.login == 'developer-bot'`. PRs not opened by the developer bot intentionally do not trigger the reviewer workflow.
+
+**Action:** None. The condition is correct. If you see this on a developer-bot PR, check that the bot's GitHub login matches exactly.
+
+---
+
+### GitHub Issues disabled — `agent:build` label trigger never fires
+
+**Symptom:** You add the `agent:build` label to an issue, but no workflow run starts.
+
+**Cause:** The `issues: labeled` GitHub event only fires when the Issues feature is enabled in the repository settings. If Issues are disabled, the event is suppressed entirely — the workflow never sees the label.
+
+**Recovery:**
+1. Go to: `https://github.com/<owner>/<repo>/settings`
+2. Under **Features**, check **Issues**.
+3. Re-add the `agent:build` label to the issue (the event already missed it).
+
+**Prevention:** The `enroll-consumer.sh` script prints this as a required manual step.
+
+---
+
+### `agent-loop.yml` not merged — workflows not active
+
+**Symptom:** No workflows run on any label or PR event, even with Issues enabled.
+
+**Cause:** The trigger wrapper `.github/workflows/agent-loop.yml` was not committed to the consumer repo's `main` branch (or was committed to a branch that is not yet merged).
+
+**Recovery:** Commit `agent-loop.yml` to `main`. Use `enroll-consumer.sh` which does this automatically.
+
+---
+
+### Cross-org reusable workflow access denied
+
+**Symptom:** Workflow run fails with: `workflow was not found` or `access denied` when calling `RiddimSoftware/riddim-release/.github/workflows/developer.yml@main`.
+
+**Cause:** The GitHub organization policy may restrict reusable workflow calls to workflows within the same org, or specifically require allowlisting.
+
+**Recovery:**
+1. Go to: `https://github.com/organizations/RiddimSoftware/settings/actions`
+2. Under **Policies**, find the setting for cross-organization workflow access.
+3. Select **Allow workflows from all organizations** or add `RiddimSoftware/riddim-release` to the allowlist.
+4. Re-run the failed workflow.
+
+---
+
+## 7. Prompt drift
+
+**What it is:** The conflict-resolver Claude prompt is versioned (e.g. `conflict-resolver-v1.md`). Over time, prompt updates may change resolution behaviour in ways that break existing consumers.
+
+**How to update:**
+1. Create the new prompt file: `docs/prompts/conflict-resolver-v2.md` in `riddim-release`.
+2. Update `agent-rebase.yml` to reference `v2` instead of `v1`.
+3. Test on `riddim-release` itself before merging to `main`.
+4. After merging, all consumers automatically pick up `v2` via their `@main` pin.
+5. Document the change in a PR comment and update the verified header on this runbook.
+
+**Why this matters:** All consumers pin to `@main` in `riddim-release`. A single prompt commit affects every repo simultaneously. Test on a low-stakes repo before merging prompt changes to `main`.

@@ -1,6 +1,6 @@
 # Autonomous PR Loop — Onboarding Guide
 
-> **Last verified against `riddim-release@026e10a` on 2026-04-30.**
+> Last verified against riddim-release@main on 2026-04-30.
 > Update this header whenever a material workflow change lands in riddim-release.
 
 **Goal:** enroll a new consumer repo in the autonomous PR loop in < 30 minutes.
@@ -65,6 +65,19 @@ gh api repos/<owner>/<repo>/actions/organization-secrets --jq '[.secrets[].name]
 
 If any are missing, a GitHub org admin must grant repository access at:
 `https://github.com/organizations/RiddimSoftware/settings/secrets/actions`
+
+To avoid replacing existing repository grants, add each repo with the per-repo endpoint:
+
+```bash
+CONSUMER="RiddimSoftware/your-repo"
+CONSUMER_ID="$(gh api /repos/${CONSUMER} --jq .id)"
+
+for SECRET in CLAUDE_CODE_OAUTH_TOKEN DEV_BOT_PAT REVIEWER_BOT_PAT; do
+  gh api \
+    --method PUT \
+    "/orgs/RiddimSoftware/actions/secrets/${SECRET}/repositories/${CONSUMER_ID}"
+done
+```
 
 ### 2b — GitHub App installation
 
@@ -175,6 +188,52 @@ bash scripts/enroll-repo.sh <owner/repo>
 bash scripts/enroll-repo.sh RiddimSoftware/epac
 ```
 
+If you need to apply just the status-check requirement from CLI while preserving all other branch-protection settings:
+
+```bash
+CONSUMER="RiddimSoftware/your-repo"
+export CONSUMER
+
+CURRENT_CHECKS="$(mktemp)"
+export CURRENT_CHECKS
+if ! gh api /repos/${CONSUMER}/branches/main/protection/required_status_checks > "${CURRENT_CHECKS}"; then
+  cat > "${CURRENT_CHECKS}" <<'EOF'
+{"strict": true, "contexts": []}
+EOF
+fi
+
+python3 - <<'PY'
+import json
+import subprocess
+import os
+
+consumer = os.environ["CONSUMER"]
+with open(os.environ["CURRENT_CHECKS"], "r", encoding="utf-8") as f:
+    checks = json.load(f)
+
+contexts = checks.get("contexts", [])
+if "reviewer-agent-passed" not in contexts:
+    contexts.append("reviewer-agent-passed")
+
+payload = {
+    "strict": checks.get("strict", True),
+    "contexts": contexts,
+}
+
+subprocess.run(
+    [
+        "gh", "api", "--method", "PATCH",
+        f"/repos/{consumer}/branches/main/protection/required_status_checks",
+        "--input", "-",
+    ],
+    input=json.dumps(payload).encode("utf-8"),
+    check=True,
+)
+PY
+
+rm -f "${CURRENT_CHECKS}"
+```
+
 The script cannot set all branch protection options via the API. Open the URL it prints and apply these settings manually on the `main` branch:
 
 | Setting | Value |
@@ -247,6 +306,7 @@ If you prefer to create them manually, here is the full label set:
 | `agent:rebase-attempt-2` | `#8db7e8` | Rebase counter — second stale-PR rebase |
 | `agent:rebase-attempt-3` | `#5319e7` | Rebase counter — third stale-PR rebase |
 | `agent:codeowners-veto` | `#b60205` | Rebase guard blocked; conflicting files are human-owned |
+| `automate` | `#0075ca` | Enrolls the PR in the autonomous code review pipeline |
 
 ---
 
@@ -326,11 +386,42 @@ See [`failure-runbook.md`](failure-runbook.md) for diagnosis and recovery steps 
 
 ---
 
+## Configuration
+
+### Rebase guard thresholds (E10)
+
+The rebase guard (`rebase-guard.sh`) enforces three safety limits on automated
+rebases. All three have defaults that can be overridden per consumer repo via
+workflow inputs or env vars.
+
+| Variable | Default | Override via |
+|---|---|---|
+| `REBASE_MAX_ATTEMPTS` | `3` | `rebase_max_attempts` workflow input on `agent-rebase.yml`; env var in `auto-rebase.yml` guard step |
+| `REBASE_MAX_FILES` | `8` | `rebase_max_files` workflow input on `agent-rebase.yml` |
+| `REBASE_MAX_LINES` | `200` | `rebase_max_lines` workflow input on `agent-rebase.yml` |
+
+Example override in the consumer repo's trigger wrapper:
+
+```yaml
+uses: RiddimSoftware/riddim-release/.github/workflows/agent-rebase.yml@main
+with:
+  rebase_max_attempts: 5
+  rebase_max_files: 12
+  rebase_max_lines: 400
+```
+
+For full details on the attempt counter, CODEOWNERS veto, and comment markers, see
+[`e10-rebase-guards.md`](e10-rebase-guards.md).
+
+---
+
 ## Related resources
 
 - [`e1-checklist.md`](e1-checklist.md) — org-level prerequisites (do this before enrolling any repo)
 - [`failure-runbook.md`](failure-runbook.md) — diagnosis and recovery
 - [`trigger-wrapper-template.yml`](trigger-wrapper-template.yml) — canonical wrapper template
-- [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation
+- [`e10-rebase-guards.md`](e10-rebase-guards.md) — rebase guard thresholds, attempt counter, CODEOWNERS veto
+- [`scripts/enroll-consumer.sh`](../../scripts/enroll-consumer.sh) — per-repo enrollment automation (supports `--dry-run`)
+- [`scripts/enroll-repo.sh`](../../scripts/enroll-repo.sh) — per-repo enrollment automation (legacy; prefer `enroll-consumer.sh`)
 - [RIDDIM-91](https://riddim.atlassian.net/browse/RIDDIM-91) — parent initiative
 - [RIDDIM-99](https://riddim.atlassian.net/browse/RIDDIM-99) — this epic

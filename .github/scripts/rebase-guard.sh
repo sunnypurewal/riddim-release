@@ -9,7 +9,8 @@
 #   REBASE_MAX_FILES           Default: 8
 #   REBASE_MAX_LINES           Default: 200
 #   REBASE_INCREMENT_ATTEMPT   When "true", add the next agent:rebase-attempt-N label.
-#   REBASE_BOT_OWNER_RE        Owners matching this regex do not veto CODEOWNERS. Default: (^|/)(developer-bot|reviewer-bot)(\[bot\])?$
+#   REBASE_BOT_OWNER_RE        Owners matching this regex do not veto CODEOWNERS.
+#                              Default matches developer-bot / reviewer-bot with optional org, @, and [bot].
 #
 # Output:
 #   First line is one of: ok, attempt-cap-exceeded, size-cap-exceeded, codeowners-veto.
@@ -60,7 +61,7 @@ fi
 REBASE_MAX_ATTEMPTS="${REBASE_MAX_ATTEMPTS:-3}"
 REBASE_MAX_FILES="${REBASE_MAX_FILES:-8}"
 REBASE_MAX_LINES="${REBASE_MAX_LINES:-200}"
-REBASE_BOT_OWNER_RE="${REBASE_BOT_OWNER_RE:-(^|/)(developer-bot|reviewer-bot)(\\[bot\\])?$}"
+REBASE_BOT_OWNER_RE="${REBASE_BOT_OWNER_RE:-(^|[/@])([^[:space:]/]*-)?(developer|reviewer)-bot(\\[bot\\])?$}"
 
 labels="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)"
 
@@ -80,6 +81,10 @@ conflicting_files="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
 marker_files="$(git grep -IlE '^(<<<<<<<|=======|>>>>>>>)' -- . 2>/dev/null || true)"
 conflicting_files="$(printf '%s\n%s\n' "$conflicting_files" "$marker_files" | sed '/^$/d' | sort -u)"
 conflicting_file_count="$(printf '%s\n' "$conflicting_files" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+conflicts_present=false
+if (( conflicting_file_count > 0 )); then
+  conflicts_present=true
+fi
 conflict_marker_lines=0
 
 if [[ -n "$conflicting_files" ]]; then
@@ -122,7 +127,7 @@ Remove \`agent:needs-human\` and the \`agent:rebase-attempt-*\` labels only afte
   exit 0
 fi
 
-if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" && -n "$conflicting_files" ]]; then
+if [[ "${REBASE_INCREMENT_ATTEMPT:-false}" == "true" && "$conflicts_present" == "true" ]]; then
   next_attempt=$((current_attempt + 1))
   old_label="agent:rebase-attempt-${current_attempt}"
   new_label="agent:rebase-attempt-${next_attempt}"

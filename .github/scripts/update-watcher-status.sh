@@ -1,55 +1,45 @@
 #!/usr/bin/env bash
-# update-watcher-status.sh — Upsert a pinned status comment on a PR.
+# Create or update the pinned watcher-status PR comment for rebase automation.
 #
 # Usage:
-#   update-watcher-status.sh <owner> <repo> <pr_number> <state> <action>
+#   update-watcher-status.sh <pr-number> <repo> <classification> <action> [details]
 #
-# The comment body uses the marker <!-- riddim:watcher-status --> so repeated
-# calls update the same comment rather than adding new ones.
-#
-# Environment:
-#   GH_TOKEN  — GitHub token with pull_requests:write on <owner>/<repo>
+# The comment body starts with a stable HTML marker so future watcher runs update
+# in place rather than spamming the PR timeline.
 
 set -euo pipefail
 
-usage() {
-  echo "Usage: $0 <owner> <repo> <pr_number> <state> <action>" >&2
-  echo "  state   — e.g. 'guard-blocked', 'rebased', 'conflict-resolved'" >&2
-  echo "  action  — e.g. 'agent:needs-human applied', 'pushed rebase', 'no action'" >&2
-}
-
-if [[ $# -lt 5 ]]; then
-  usage
+if [[ $# -lt 4 ]]; then
+  echo "Usage: $0 <pr-number> <repo> <classification> <action> [details]" >&2
   exit 2
 fi
 
-OWNER="$1"
-REPO="$2"
-PR_NUMBER="$3"
-STATE="$4"
-ACTION="$5"
+pr_number="$1"
+repo="$2"
+classification="$3"
+action="$4"
+details="${5:-}"
+marker="<!-- riddim:watcher-status -->"
 
-FULL_REPO="${OWNER}/${REPO}"
-MARKER="<!-- riddim:watcher-status -->"
-TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+existing="$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+  --jq ".[] | select(.body | contains(\"${marker}\")) | .id" 2>/dev/null | tail -n 1 || true)"
 
-BODY="${MARKER}
-**Last watcher run:** ${TIMESTAMP}
-**State:** ${STATE}
-**Action:** ${ACTION}"
+body="$(cat <<BODY
+${marker}
+**Rebase Watcher status**
 
-# Find existing comment with the marker
-existing_id="$(gh api "repos/${FULL_REPO}/issues/${PR_NUMBER}/comments" \
-  --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
-  | tail -n 1 || true)"
+- Last classification: \`${classification}\`
+- Last action: \`${action}\`
+- Updated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-if [[ -n "$existing_id" ]]; then
-  gh api --method PATCH \
-    "/repos/${FULL_REPO}/issues/comments/${existing_id}" \
-    --field "body=${BODY}" \
-    >/dev/null
-  echo "Updated existing watcher-status comment (id=${existing_id}) on ${FULL_REPO}#${PR_NUMBER}."
+${details}
+
+This comment is updated in place by \`riddim-release\` automation.
+BODY
+)"
+
+if [[ -n "$existing" ]]; then
+  gh api "repos/${repo}/issues/comments/${existing}" --method PATCH -f "body=${body}" >/dev/null
 else
-  gh pr comment "$PR_NUMBER" --repo "$FULL_REPO" --body "$BODY" >/dev/null
-  echo "Created new watcher-status comment on ${FULL_REPO}#${PR_NUMBER}."
+  gh pr comment "$pr_number" --repo "$repo" --body "$body" >/dev/null
 fi

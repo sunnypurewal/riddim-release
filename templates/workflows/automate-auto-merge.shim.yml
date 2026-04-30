@@ -1,0 +1,23 @@
+# riddim-release template - copy to .github/workflows/automate-auto-merge.yml
+# Enables GitHub auto-merge when the `automate` label is added to a PR.
+# Requires org/repo secrets: DEV_BOT_APP_ID, DEV_BOT_PRIVATE_KEY.
+name: Automate Auto-Merge
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  call:
+    if: ${{ github.event.label.name == 'automate' }}
+    uses: RiddimSoftware/riddim-release/.github/workflows/automate-auto-merge.yml@main
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      repository: ${{ github.repository }}
+    secrets:
+      dev_bot_app_id: ${{ secrets.DEV_BOT_APP_ID }}
+      dev_bot_private_key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
