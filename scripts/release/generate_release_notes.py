@@ -65,6 +65,14 @@ def extract_release_notes_from_pr(pr_number: str) -> list[str]:
     return notes
 
 
+def write_output(path: str, content: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -111,11 +119,7 @@ def main() -> None:
         print(content)
         return
 
-    parent = os.path.dirname(args.output)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(args.output, "w") as f:
-        f.write(content)
+    write_output(args.output, content)
 
     print(f"Wrote {len(notes)} release note(s) to {args.output}")
     print(content)

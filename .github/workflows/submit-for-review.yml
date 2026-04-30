@@ -1,0 +1,88 @@
+name: Reusable Submit for App Store Review
+
+# Attaches a TestFlight build to the pending App Store version and submits it
+# for App Store review. Gated behind a GitHub environment (approval_environment)
+# so QA sign-off is captured as an Actions approval event before submission.
+
+on:
+  workflow_call:
+    inputs:
+      apple_app_id:
+        required: true
+        type: string
+      build_number:
+        required: true
+        type: string
+        description: "Build number (CFBundleVersion) of the TestFlight build to attach"
+      submit_for_review:
+        required: false
+        type: boolean
+        default: true
+        description: "Submit to App Store review after attaching. Set false to only attach the build."
+      runner_labels_linux:
+        required: false
+        type: string
+        default: '["self-hosted","macOS"]'
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
+      AWS_RELEASE_ROLE_ARN:
+        required: true
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: app-store-submit
+  cancel-in-progress: false
+
+env:
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'main' }}
+
+jobs:
+  submit:
+    name: Attach build and submit for review
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
+
+    steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
+
+      - name: Checkout riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          token: ${{ steps.generate-token.outputs.token || secrets.RUNNER_BUDGET_PAT || secrets.RIDDIM_RELEASE_TOKEN || github.token }}
+          path: .riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Fetch ASC credentials
+        run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
+
+      - name: Attach build and submit for App Store review
+        run: |
+          python3 .riddim-release/scripts/runner/attach_and_submit.py \
+            "${{ inputs.apple_app_id }}" \
+            "${{ inputs.build_number }}" \
+            "${{ inputs.submit_for_review }}"

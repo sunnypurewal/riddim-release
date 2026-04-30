@@ -1,0 +1,24 @@
+# riddim-release template - copy to .github/workflows/website-cleanup.yml and adjust
+# Requires repo variables: AMPLIFY_APP_ID, AWS_REGION, AWS_WEBSITE_PREVIEW_ROLE_ARN
+name: Website Preview Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    if: ${{ github.event.pull_request.merged == false && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: RiddimSoftware/riddim-release/.github/workflows/website-cleanup.yml@v1
+    with:
+      amplify_app_id: ${{ vars.AMPLIFY_APP_ID }}
+      aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      aws_role_arn: ${{ vars.AWS_WEBSITE_PREVIEW_ROLE_ARN }}
+      pr_number: ${{ github.event.pull_request.number }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+    secrets: inherit

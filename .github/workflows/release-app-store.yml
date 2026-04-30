@@ -30,12 +30,20 @@ on:
         type: string
         default: "app-store-release"
       runner_labels_mac:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
       runner_labels_linux:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
     secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
       AWS_RELEASE_ROLE_ARN:
         required: true
       RIDDIM_RELEASE_TOKEN:
@@ -53,11 +61,12 @@ concurrency:
 
 env:
   RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+  FASTLANE_SKIP_UPDATE_CHECK: "1"
 
 jobs:
   find-build:
     name: Find TestFlight build
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     outputs:
       build_number: ${{ steps.find.outputs.build_number }}
       build_version: ${{ steps.find.outputs.build_version }}
@@ -65,6 +74,14 @@ jobs:
       tag: ${{ steps.resolve-tag.outputs.tag }}
       version: ${{ steps.resolve-tag.outputs.version }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Check out caller repository
         uses: actions/checkout@v4
 
@@ -73,7 +90,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Resolve tag and version
@@ -100,7 +117,7 @@ jobs:
         run: .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Install Python dependencies
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         run: python3 -m pip install -r .riddim-release/scripts/release/requirements.txt --quiet
 
       - name: Find build matching release version
@@ -130,9 +147,17 @@ jobs:
   approve-release:
     name: Approve release
     needs: find-build
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     environment: ${{ inputs.approval_environment }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Release candidate summary
         run: |
           echo "## Release candidate ready for approval"
@@ -151,8 +176,16 @@ jobs:
       - find-build
       - approve-release
     if: ${{ !inputs.dry_run }}
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Check out caller repository
         uses: actions/checkout@v4
 
@@ -161,7 +194,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC
@@ -174,12 +207,21 @@ jobs:
         run: .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Set up Ruby and Fastlane
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
           working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Install Ruby bundle
+        if: ${{ inputs.force_self_hosted || contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        working-directory: ${{ inputs.ios_workdir }}
+        run: |
+          export BUNDLE_VERSION=system
+          echo "BUNDLE_VERSION=system" >> "$GITHUB_ENV"
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
 
       - name: Write release notes from GitHub Release
         shell: bash
@@ -203,6 +245,8 @@ jobs:
             skip_screenshots:false \
             skip_metadata:false \
             submit_for_review:false \
+            run_precheck_before_submit:false \
+            precheck_include_in_app_purchases:false \
             force:true
 
       - name: Submit build for App Store review
@@ -215,6 +259,8 @@ jobs:
             skip_screenshots:true \
             skip_metadata:true \
             submit_for_review:true \
+            run_precheck_before_submit:false \
+            precheck_include_in_app_purchases:false \
             force:true \
             phased_release:true \
             automatic_release:false \

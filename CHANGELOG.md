@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- No unreleased changes.
+- Added reusable Amplify website preview, promotion, and cleanup workflows with
+  thin consuming-repo templates.
 
 ## v1.0.0 - 2026-04-28
 

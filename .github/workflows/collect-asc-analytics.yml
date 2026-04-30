@@ -36,12 +36,17 @@ on:
         type: string
         default: ""
       runner_labels_linux:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
       python_version:
         required: false
         type: string
         default: "3.12"
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
     secrets:
       RIDDIM_RELEASE_TOKEN:
         required: false
@@ -64,7 +69,7 @@ concurrency:
 jobs:
   collect:
     name: Collect ASC analytics artifact
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
 
     steps:
       - name: Checkout calling repo
@@ -79,13 +84,13 @@ jobs:
           path: .riddim-release
 
       - name: Set up Python
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
 
       - name: Install Python dependencies
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         run: python3 -m pip install --upgrade pip -r .riddim-release/scripts/release/requirements.txt
 
       - name: Prepare ASC private key

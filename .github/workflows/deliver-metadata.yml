@@ -21,12 +21,20 @@ on:
         required: true
         type: string
       runner_labels_mac:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
       runner_labels_linux:
-        required: true
+        required: false
         type: string
+        default: '["self-hosted","macOS"]'
+      force_self_hosted:
+        required: false
+        type: boolean
+        default: true
     secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
       AWS_RELEASE_ROLE_ARN:
         required: true
       RIDDIM_RELEASE_TOKEN:
@@ -44,13 +52,22 @@ concurrency:
 
 env:
   RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+  FASTLANE_SKIP_UPDATE_CHECK: "1"
 
 jobs:
   deliver:
     name: Push metadata to App Store Connect
-    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    runs-on: ${{ fromJSON(inputs.force_self_hosted && '["self-hosted","macOS"]' || inputs.runner_labels_linux) }}
 
     steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
       - name: Checkout calling repo
         uses: actions/checkout@v4
 
@@ -59,7 +76,7 @@ jobs:
         with:
           repository: RiddimSoftware/riddim-release
           ref: ${{ env.RIDDIM_RELEASE_REF }}
-          token: ${{ secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
           path: .riddim-release
 
       - name: Configure AWS credentials via OIDC
@@ -72,12 +89,21 @@ jobs:
         run: bash .riddim-release/scripts/runner/fetch_asc_secret.sh
 
       - name: Set up Ruby and Fastlane
-        if: ${{ !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        if: ${{ !inputs.force_self_hosted && !contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
           bundler-cache: true
           working-directory: ${{ inputs.ios_workdir }}
+
+      - name: Install Ruby bundle
+        if: ${{ inputs.force_self_hosted || contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
+        working-directory: ${{ inputs.ios_workdir }}
+        run: |
+          export BUNDLE_VERSION=system
+          echo "BUNDLE_VERSION=system" >> "$GITHUB_ENV"
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
 
       - name: Deliver metadata to App Store Connect
         working-directory: ${{ inputs.ios_workdir }}

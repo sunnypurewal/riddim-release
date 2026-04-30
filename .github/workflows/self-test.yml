@@ -3,7 +3,7 @@ name: Self-test (internal smoke)
 # Internal smoke test for build-deploy.yml. Requires repo secrets:
 #   AWS_RELEASE_ROLE_ARN, KEYCHAIN_PASSWORD
 # and repo variables:
-#   RUNNER_LABELS_MAC (e.g. '["macos-15"]'), RUNNER_LABELS_LINUX (e.g. '["ubuntu-latest"]')
+#   RUNNER_LABELS_MAC (e.g. '["self-hosted","macOS"]'), RUNNER_LABELS_LINUX (e.g. '["self-hosted","macOS"]')
 #   RIDDIM_RELEASE_REF (optional; use "main" before the v1 tag exists)
 #
 # Run with dry_run: true - the DAG executes version computation and reusable
@@ -42,6 +42,6 @@ jobs:
       ios_workdir:      ios
       bump:             ${{ inputs.bump }}
       dry_run:          true
-      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC   || '["macos-15"]' }}
-      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      runner_labels_mac:   ${{ vars.RUNNER_LABELS_MAC || "[\"self-hosted\",\"macOS\"]" }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
     secrets: inherit

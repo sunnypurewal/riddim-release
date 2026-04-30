@@ -48,7 +48,7 @@ jobs:
       create_requests: ${{ inputs.create_requests == true }}
       normalize: true
       evaluate_jira_key: ${{ inputs.evaluate_jira_key || '' }}
-      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]' }}
+      runner_labels_linux: ${{ vars.RUNNER_LABELS_LINUX || "[\"self-hosted\",\"macOS\"]" }}
     secrets:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

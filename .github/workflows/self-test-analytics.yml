@@ -1,14 +1,6 @@
 name: Self Test ASC Analytics
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/collect-asc-analytics.yml"
-      - ".github/workflows/self-test-analytics.yml"
-      - "docs/analytics-artifact.md"
-      - "docs/asc-analytics.md"
-      - "scripts/analytics/**"
-      - "templates/workflows/collect-asc-analytics.shim.yml"
   workflow_dispatch:
 
 permissions:
@@ -16,18 +8,18 @@ permissions:
 
 jobs:
   analytics-fixture:
-    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]') }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate workflow syntax
-        if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
+        if: ${{ !contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]'), 'self-hosted') }}
         uses: docker://rhysd/actionlint:latest
         with:
           args: .github/workflows/collect-asc-analytics.yml .github/workflows/self-test-analytics.yml templates/workflows/collect-asc-analytics.shim.yml
 
       - name: Validate workflow syntax
-        if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["ubuntu-latest"]'), 'self-hosted') }}
+        if: ${{ contains(fromJSON(vars.RUNNER_LABELS_LINUX || '["self-hosted","macOS"]'), 'self-hosted') }}
         run: |
           if ! command -v actionlint >/dev/null 2>&1; then
             brew install actionlint

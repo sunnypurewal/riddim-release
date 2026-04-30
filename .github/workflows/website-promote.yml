@@ -1,0 +1,210 @@
+name: Website Promote (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      amplify_app_id:
+        required: true
+        type: string
+      aws_region:
+        required: false
+        type: string
+        default: us-east-1
+      aws_role_arn:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+      preview_branch_prefix:
+        required: false
+        type: string
+        default: "pr"
+      production_branch:
+        required: false
+        type: string
+        default: "main"
+      production_url:
+        required: false
+        type: string
+        default: ""
+      preview_workflow_file:
+        required: false
+        type: string
+        default: "website-preview.yml"
+      production_environment:
+        required: false
+        type: string
+        default: "website-production"
+      runner_labels_linux:
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+    secrets:
+      RIDDIM_ACTIONS_APP_PRIVATE_KEY:
+        required: false
+      RIDDIM_RELEASE_TOKEN:
+        required: false
+      RUNNER_BUDGET_PAT:
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  RIDDIM_RELEASE_REF: ${{ vars.RIDDIM_RELEASE_REF || 'v1' }}
+
+jobs:
+  resolve-artifact:
+    name: Resolve approved preview
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    outputs:
+      artifact_name: ${{ steps.vars.outputs.artifact_name }}
+      preview_branch: ${{ steps.vars.outputs.preview_branch }}
+      preview_run_id: ${{ steps.find-run.outputs.preview_run_id }}
+      preview_url: ${{ steps.vars.outputs.preview_url }}
+    steps:
+      - name: Resolve promotion settings
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_branch="${{ inputs.preview_branch_prefix }}-${{ inputs.pr_number }}"
+          {
+            echo "artifact_name=website-preview-pr-${{ inputs.pr_number }}"
+            echo "preview_branch=${preview_branch}"
+            echo "preview_url=https://${preview_branch}.${{ inputs.amplify_app_id }}.amplifyapp.com/"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out production branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.production_branch }}
+          fetch-depth: 0
+
+      - name: Verify preview commit is on production branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "${{ inputs.source_sha }}" HEAD; then
+            echo "::error::Preview commit ${{ inputs.source_sha }} is not an ancestor of ${{ inputs.production_branch }}."
+            echo "::error::Merge the PR without losing the previewed commit before promoting."
+            exit 1
+          fi
+
+      - name: Find matching preview run
+        id: find-run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "${{ inputs.preview_workflow_file }}" \
+            --event pull_request \
+            --limit 100 \
+            --json databaseId,headSha,conclusion,status \
+            --jq '.[] | select(.headSha == "${{ inputs.source_sha }}" and .status == "completed" and .conclusion == "success") | .databaseId' \
+            | head -1)"
+
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No successful preview artifact found for commit ${{ inputs.source_sha }}."
+            exit 1
+          fi
+
+          echo "preview_run_id=${run_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Promotion summary
+        shell: bash
+        run: |
+          {
+            echo "## Website production candidate"
+            echo ""
+            echo "- Preview URL: ${{ steps.vars.outputs.preview_url }}"
+            echo "- Preview run: ${{ steps.find-run.outputs.preview_run_id }}"
+            echo "- Commit: ${{ inputs.source_sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-production:
+    name: Approve and deploy production
+    needs: resolve-artifact
+    runs-on: ${{ fromJSON(inputs.runner_labels_linux) }}
+    environment:
+      name: ${{ inputs.production_environment }}
+      url: ${{ inputs.production_url || format('https://{0}.{1}.amplifyapp.com/', inputs.production_branch, inputs.amplify_app_id) }}
+    steps:
+      - name: Generate riddim-release token
+        id: generate-token
+        if: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RIDDIM_ACTIONS_APP_ID }}
+          private-key: ${{ secrets.RIDDIM_ACTIONS_APP_PRIVATE_KEY }}
+          owner: RiddimSoftware
+
+      - name: Check out riddim-release
+        uses: actions/checkout@v4
+        with:
+          repository: RiddimSoftware/riddim-release
+          ref: ${{ env.RIDDIM_RELEASE_REF }}
+          token: ${{ steps.generate-token.outputs.token || secrets.RIDDIM_RELEASE_TOKEN || secrets.RUNNER_BUDGET_PAT || github.token }}
+          path: .riddim-release
+
+      - name: Download preview artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ needs.resolve-artifact.outputs.preview_run_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "${{ needs.resolve-artifact.outputs.artifact_name }}" \
+            --dir preview-artifact
+
+      - name: Validate preview artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/validate_manifest.py \
+            --manifest preview-artifact/website-preview-manifest.json \
+            --artifact preview-artifact/site.zip \
+            --pr-number "${{ inputs.pr_number }}" \
+            --source-sha "${{ inputs.source_sha }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Deploy production branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/amplify_deploy.py \
+            --app-id "${{ inputs.amplify_app_id }}" \
+            --branch "${{ inputs.production_branch }}" \
+            --artifact preview-artifact/site.zip \
+            --stage PRODUCTION
+
+      - name: Delete promoted preview branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .riddim-release/scripts/website/amplify_delete_branch.py \
+            --app-id "${{ inputs.amplify_app_id }}" \
+            --branch "${{ needs.resolve-artifact.outputs.preview_branch }}"
+
+      - name: Comment production deployment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ inputs.pr_number }}" --body "Approved preview was deployed to production from commit \`${{ inputs.source_sha }}\`."

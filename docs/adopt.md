@@ -280,6 +280,11 @@ import_from_git(
 )
 ```
 
+The imported `fastlane/Fastfile` is intentionally self-contained. Consuming
+apps should not copy or require files from `riddim-release/fastlane/helpers`;
+that directory is not available when Fastlane evaluates the imported Fastfile in
+the app repo.
+
 Populate metadata and media folders:
 
 ```bash
