@@ -76,7 +76,7 @@ jobs:
     name: Reviewer agent
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       checks: write
       pull-requests: write
       issues: write
@@ -258,14 +258,32 @@ jobs:
 
           exit 1
 
+      - name: Resolve PR branch name
+        id: pr_branch
+        if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
+        env:
+          GH_TOKEN: ${{ steps.reviewer-bot-token.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          branch="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json headRefName --jq .headRefName)"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved PR #${PR_NUMBER} branch: ${branch}"
+
       - name: Checkout caller PR workspace
         if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ inputs.pr_number }}/merge
+          ref: ${{ steps.pr_branch.outputs.branch }}
           path: consumer
           token: ${{ steps.reviewer-bot-token.outputs.token }}
+
+      - name: Configure git for reviewer-bot commits
+        if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
+        run: |
+          git -C consumer config user.name "riddim-reviewer-bot[bot]"
+          git -C consumer config user.email "riddim-reviewer-bot[bot]@users.noreply.github.com"
 
       - name: Load reviewer prompt
         if: ${{ steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
@@ -296,7 +314,6 @@ jobs:
           for required in \
             "gh pr review" \
             "--approve" \
-            "--request-changes" \
             "git commit" \
             "git push" \
             "consumer/CLAUDE.md" \
@@ -330,26 +347,25 @@ jobs:
           GH_TOKEN: ${{ steps.reviewer-bot-token.outputs.token }}
           MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
         run: |
           case "${MOCK_REVIEWER_VERDICT}" in
             approve)
               verdict="APPROVED"
               ;;
-            request-changes)
-              verdict="CHANGES_REQUESTED"
-              ;;
             "")
               if [[ "${ACT:-}" == "true" ]]; then
-                echo "Set mock_reviewer_verdict to approve or request-changes when running this path under act." >&2
+                echo "Set mock_reviewer_verdict to approve when running this path under act." >&2
                 verdict="NO_VERDICT"
               else
+                # Don't filter by commit_id: Claude may have pushed fix commits
+                # before approving, changing the head SHA. Take the most recent
+                # review from reviewer-bot regardless of which commit it's on.
                 latest_verdict=""
                 while IFS= read -r verdict_state; do
                   latest_verdict="${verdict_state}"
                 done < <(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
                   --paginate \
-                  --jq ".[] | select(.user.login == \"${REVIEWER_BOT_LOGIN}\" and .commit_id == \"${PR_HEAD_SHA}\") | .state")
+                  --jq ".[] | select(.user.login == \"${REVIEWER_BOT_LOGIN}\") | .state")
 
                 if [[ -z "${latest_verdict}" ]]; then
                   verdict="NO_VERDICT"
@@ -364,8 +380,8 @@ jobs:
               ;;
           esac
 
-          if [[ "${verdict}" != "APPROVED" && "${verdict}" != "CHANGES_REQUESTED" ]]; then
-            echo "Reviewer did not produce an approve/request-changes verdict; got: ${verdict:-<empty>}" >&2
+          if [[ "${verdict}" != "APPROVED" ]]; then
+            echo "Reviewer did not approve; got: ${verdict:-<empty>}" >&2
             verdict="NO_VERDICT"
           fi
 
@@ -376,12 +392,11 @@ jobs:
         if: ${{ always() && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         env:
           GH_TOKEN: ${{ steps.reviewer-bot-token.outputs.token }}
-          PR_HEAD_SHA: ${{ steps.pr_metadata.outputs.head_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
           VERDICT: ${{ steps.reviewer_verdict.outputs.verdict }}
         run: |
           conclusion="failure"
-          title="Reviewer requested changes"
+          title="Reviewer did not approve"
           summary="Reviewer verdict for PR #${PR_NUMBER}: ${VERDICT}."
 
           if [[ "${VERDICT}" == "APPROVED" ]]; then
@@ -390,12 +405,14 @@ jobs:
           fi
 
           if [[ "${ACT:-}" == "true" ]]; then
-            echo "act dry-run: create check-run ${REVIEWER_STATUS_CHECK} on ${PR_HEAD_SHA} with conclusion=${conclusion}"
+            echo "act dry-run: create check-run ${REVIEWER_STATUS_CHECK} on <head-sha> with conclusion=${conclusion}"
             echo "${summary}"
           else
+            # Re-fetch head SHA: Claude may have pushed fix commits, changing it
+            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json headRefOid --jq .headRefOid)"
             gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
               -f "name=${REVIEWER_STATUS_CHECK}" \
-              -f "head_sha=${PR_HEAD_SHA}" \
+              -f "head_sha=${head_sha}" \
               -f "status=completed" \
               -f "conclusion=${conclusion}" \
               -f "details_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
