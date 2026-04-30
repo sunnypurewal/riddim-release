@@ -55,14 +55,8 @@ The `agent-rebase.yml` workflow accepts `rebase_max_attempts`, `rebase_max_files
 and `rebase_max_lines` as typed workflow inputs and forwards them as env vars to
 `rebase-guard.sh`.
 
-For `auto-rebase.yml` (E8 mechanical path), set `REBASE_MAX_ATTEMPTS` as an env var
-in the calling step:
-
-```yaml
-- name: Rebase guard — attempt counter check
-  env:
-    REBASE_MAX_ATTEMPTS: "5"
-```
+`auto-rebase.yml` (E8 mechanical path) currently hard-codes `REBASE_MAX_ATTEMPTS`
+to `3` in the workflow and does not currently support per-repo override.
 
 ---
 
@@ -119,9 +113,7 @@ A file is **not vetoed** when:
 - All matched owners match `REBASE_BOT_OWNER_RE` (developer-bot / reviewer-bot).
 - The CODEOWNERS file does not exist in the repo.
 
-**Warning:** if the entire repo is covered by a single `* @developer-bot` rule, the
-guard prints a stderr warning (`entire-repo-bot-owned`) but still passes. That
-configuration almost certainly means CODEOWNERS was set up incorrectly.
+`*` is allowed and still passes.
 
 ---
 
