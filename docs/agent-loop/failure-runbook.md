@@ -5,6 +5,8 @@
 
 Quick reference for diagnosing and recovering from failures in the autonomous PR loop. Each section states the symptom, diagnosis steps, and recovery action.
 
+Trigger surface: Jira label `agent:pr` -> GitHub `repository_dispatch` type `jira-ticket-ready` -> `create-pr.yml` opens the PR as `riddim-developer-bot`. GitHub Issues are not used as the entry point.
+
 ---
 
 ## 1. Reviewer stuck in a loop

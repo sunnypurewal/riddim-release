@@ -1,6 +1,6 @@
 # Autonomous PR Loop - Onboarding Guide
 
-> Last verified against `riddim-release@4834891` on `2026-04-30`.
+> Last verified against `riddim-release@1a45148` on `2026-04-30`.
 > Update this header whenever a material workflow change lands in riddim-release.
 
 **Goal:** enroll a new consumer repo in the autonomous PR loop in under 30 minutes.
