@@ -79,6 +79,10 @@ labels=(
   "agent:attempt-1|ffd8a8|Attempt counter: first developer fix-up attempt."
   "agent:attempt-2|ffb56b|Attempt counter: second developer fix-up attempt."
   "agent:attempt-3|ff922b|Attempt counter: third and final default attempt."
+  "agent:rebase-attempt-1|c5def5|Rebase attempt counter: first stale-PR rebase attempt."
+  "agent:rebase-attempt-2|8db7e8|Rebase attempt counter: second stale-PR rebase attempt."
+  "agent:rebase-attempt-3|5319e7|Rebase attempt counter: third and final default stale-PR attempt."
+  "agent:codeowners-veto|b60205|Applied when rebase conflicts touch human-owned CODEOWNERS paths."
 )
 
 for label in "${labels[@]}"; do
@@ -167,6 +171,11 @@ echo "         - .github/workflows/"
 echo "         - fastlane/ or release pipeline dirs"
 echo "         - infra/ or terraform/"
 echo "         - auth-related paths"
+echo ""
+echo "  [ ] 4a. If enabling stale-PR rebases, wire your watcher to call:"
+echo "         RiddimSoftware/riddim-release/.github/workflows/agent-rebase.yml@main"
+echo "         with REBASE_MAX_ATTEMPTS, REBASE_MAX_FILES, and REBASE_MAX_LINES"
+echo "         overrides only when the defaults are too strict for this repo."
 echo ""
 echo "  [ ] 4. Verify CLAUDE_CODE_OAUTH_TOKEN and REVIEWER_BOT_PAT are accessible"
 echo "         to this repo (check Step 3 output above)."

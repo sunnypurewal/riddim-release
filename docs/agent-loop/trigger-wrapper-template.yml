@@ -23,6 +23,10 @@ on:
     types: [opened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"
 
 jobs:
   # -----------------------------------------------------------------
@@ -39,7 +43,7 @@ jobs:
       !contains(github.event.issue.labels.*.name, 'agent:needs-human')
     uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
     with:
-      trigger_type: issue-build
+      trigger_type: issue_labeled
       issue_number: ${{ github.event.issue.number }}
       issue_body: ${{ github.event.issue.body }}
     secrets: inherit
@@ -58,7 +62,8 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'agent:needs-human')
     uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
     with:
-      trigger_type: pr-fixup
+      trigger_type: changes_requested
+      issue_number: ${{ github.event.pull_request.number }}
       pr_number: ${{ github.event.pull_request.number }}
       review_comments: ${{ github.event.review.body }}
     secrets: inherit
@@ -80,3 +85,18 @@ jobs:
     with:
       pr_number: ${{ github.event.pull_request.number }}
     secrets: inherit
+
+  # -----------------------------------------------------------------
+  # Stale PR watcher
+  # Conservative wrapper: consumers can replace the PR discovery step
+  # with a richer job that dispatches this reusable workflow per PR.
+  # -----------------------------------------------------------------
+  rebase-watcher-note:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "Call RiddimSoftware/riddim-release/.github/workflows/agent-rebase.yml@main for each open autonomous PR that is behind or dirty."
+          echo "Keep concurrency group rebase-\${{ github.repository }}-<pr-number> and pass consumer build/test commands."
