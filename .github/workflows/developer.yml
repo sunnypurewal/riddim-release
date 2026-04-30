@@ -207,15 +207,6 @@ jobs:
             echo "No pause labels present on ${target_type} #${target_number}; continuing."
           fi
 
-      # -- Attempt counter ---------------------------------------------------
-      - name: Increment attempt label
-        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.pause-guard.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.dev_bot_pat }}
-          REPO: ${{ github.repository }}
-        run: |
-          bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
-
       # ── Safety guard ──────────────────────────────────────────────────────
       - name: Run safety guard
         if: ${{ inputs.trigger_type == 'changes_requested' && steps.pause-guard.outputs.skip != 'true' && !inputs.self_test_mode }}
@@ -237,7 +228,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          head_ref_oid="$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)"
+          head_ref_oid="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)"
           echo "head_ref_oid=$head_ref_oid" >> "$GITHUB_OUTPUT"
 
       # ── Deterministic self-test path ──────────────────────────────────────
