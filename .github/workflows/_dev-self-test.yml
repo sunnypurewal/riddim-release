@@ -3,8 +3,8 @@
 # Run before merging changes to developer.yml or developer prompts:
 #   gh workflow run _dev-self-test.yml \
 #     --repo RiddimSoftware/riddim-release \
-#     -f trigger_type=issue-build \
-#     -f issue_body="Synthetic issue body"
+#     -f trigger_type=pr-fixup \
+#     -f review_comments="Synthetic review feedback"
 
 name: Developer Workflow Self-Test
 
@@ -16,14 +16,8 @@ on:
         required: true
         type: choice
         options:
-          - issue-build
           - pr-fixup
-        default: issue-build
-      issue_body:
-        description: "Synthetic issue body for issue-build self-tests."
-        required: false
-        type: string
-        default: "Create the deterministic developer self-test artifact."
+        default: pr-fixup
       review_comments:
         description: "Synthetic review comments for pr-fixup self-tests."
         required: false
@@ -34,8 +28,8 @@ on:
         required: false
         type: boolean
         default: true
-      synthetic_issue_number:
-        description: "Optional fixed issue/PR number for cancellation verification."
+      synthetic_pr_number:
+        description: "Optional fixed PR number for cancellation verification."
         required: false
         type: string
         default: ""
@@ -46,7 +40,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: developer-self-test-${{ inputs.synthetic_issue_number || github.run_id }}
+  group: developer-self-test-${{ inputs.synthetic_pr_number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -54,10 +48,8 @@ jobs:
     name: Exercise developer.yml
     uses: ./.github/workflows/developer.yml
     with:
-      trigger_type: ${{ inputs.trigger_type == 'issue-build' && 'issue_labeled' || 'changes_requested' }}
-      issue_number: ${{ fromJSON(inputs.synthetic_issue_number || github.run_id) }}
-      issue_body: ${{ inputs.issue_body }}
-      pr_number: ${{ inputs.trigger_type == 'pr-fixup' && fromJSON(inputs.synthetic_issue_number || github.run_id) || 0 }}
+      trigger_type: changes_requested
+      pr_number: ${{ fromJSON(inputs.synthetic_pr_number || github.run_id) }}
       review_comments: ${{ inputs.review_comments }}
       prompt_override: "RIDDIM-111 deterministic self-test. Do not invoke the agent."
       self_test_mode: true
@@ -95,11 +87,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$TRIGGER_TYPE" == "issue-build" ]]; then
-            test -s self-test-artifact/developer-self-test.md
-          else
-            test -s self-test-artifact/developer-self-test-fixup.md
-          fi
+          test -s self-test-artifact/developer-self-test-fixup.md
 
       - name: Note local act assertion coverage
         if: ${{ needs.exercise-developer-workflow.result == 'success' && env.ACT == 'true' }}

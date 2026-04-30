@@ -26,7 +26,6 @@ if [[ ${#repos[@]} -eq 0 ]]; then
 fi
 
 labels=(
-  "agent:build|E8A838|Triggers the developer workflow (initial build)"
   "agent:pause|B60205|Kill switch: short-circuits both workflows; no agent invocation"
   "agent:needs-human|D93F0B|Set by cap-hit or guard-script; blocks auto-merge until removed"
   "agent:attempt-1|FEF2C0|First build or fix-up attempt"

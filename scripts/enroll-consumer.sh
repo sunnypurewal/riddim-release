@@ -148,7 +148,6 @@ fi
 step 1 "Create agent:* labels on ${REPO}"
 
 declare -a LABELS=(
-  "agent:build|fb8c00|Triggers the autonomous developer workflow on an issue."
   "agent:pause|6a737d|Manual override that halts autonomous workflows on a PR or issue."
   "agent:needs-human|d73a4a|Applied when attempt cap is hit; blocks automation, requires human review."
   "agent:attempt-1|ffd8a8|Attempt counter: first developer fix-up attempt."

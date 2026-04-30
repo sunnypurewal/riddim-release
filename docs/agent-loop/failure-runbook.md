@@ -57,7 +57,7 @@ gh pr view <pr-number> --repo <owner/repo> --json labels,url
      --remove-label "agent:attempt-2" \
      --remove-label "agent:attempt-3"
    ```
-   Then push a fix commit to the branch to trigger the reviewer again, or re-add `agent:build` to the source issue to start fresh.
+   Then push a fix commit to the branch to trigger the reviewer again, or re-add Jira label `agent:pr` to a fresh ticket after pushing a branch containing the ticket key.
 
 ---
 
@@ -210,24 +210,26 @@ These failure modes were confirmed in the E6 pilot on `RiddimSoftware/epac`. Eac
 
 ---
 
-### GitHub Issues disabled — `agent:build` label trigger never fires
+### Jira dispatch did not start the PR creation workflow
 
-**Symptom:** You add the `agent:build` label to an issue, but no workflow run starts.
+**Symptom:** You add the Jira `agent:pr` label to a ticket, but no `Autonomous PR Loop` workflow run starts in GitHub Actions.
 
-**Cause:** The `issues: labeled` GitHub event only fires when the Issues feature is enabled in the repository settings. If Issues are disabled, the event is suppressed entirely — the workflow never sees the label.
+**Cause:** The current trigger surface is Jira Automation -> `repository_dispatch` type `jira-ticket-ready`. If the Jira rule is disabled, the PAT is expired, the org PAT policy blocks fine-grained tokens, or the consumer wrapper is not on `main`, GitHub never receives the dispatch event.
 
 **Recovery:**
-1. Go to: `https://github.com/<owner>/<repo>/settings`
-2. Under **Features**, check **Issues**.
-3. Re-add the `agent:build` label to the issue (the event already missed it).
+1. Open the Jira Automation audit log for the consumer project.
+2. Confirm the `agent:pr` label-add event fired the rule.
+3. Confirm the web request returned HTTP 204 from `https://api.github.com/repos/RiddimSoftware/<consumer>/dispatches`.
+4. If the request failed, rotate the fine-grained PAT and verify the org policy allows PATs for `RiddimSoftware` resources.
+5. Re-add `agent:pr` or manually re-run the Jira rule after the configuration is fixed.
 
-**Prevention:** The `enroll-consumer.sh` script prints this as a required manual step.
+**Prevention:** Follow `docs/agent-loop/onboarding.md` Step 7 exactly and keep the PAT expiry at 90 days or less with an owner reminder.
 
 ---
 
 ### `agent-loop.yml` not merged — workflows not active
 
-**Symptom:** No workflows run on any label or PR event, even with Issues enabled.
+**Symptom:** No workflows run on Jira dispatch or PR events.
 
 **Cause:** The trigger wrapper `.github/workflows/agent-loop.yml` was not committed to the consumer repo's `main` branch (or was committed to a branch that is not yet merged).
 

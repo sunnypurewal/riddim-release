@@ -58,7 +58,6 @@ step_labels() {
   log "Creating agent:* labels on ${REPOS[*]}"
 
   declare -A LABELS=(
-    ["agent:build"]="0075ca|PR opened by developer-bot"
     ["agent:pause"]="e11d48|Kill switch: stops the loop"
     ["agent:needs-human"]="f97316|Reviewer blocked, needs human"
     ["agent:attempt-1"]="6b7280|Agent attempt 1 of 3"

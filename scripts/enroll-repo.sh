@@ -73,7 +73,6 @@ echo "Step 1: Creating agent:* labels on $REPO..."
 echo ""
 
 labels=(
-  "agent:build|fb8c00|Triggers the autonomous developer workflow on an issue."
   "agent:pause|6a737d|Manual override that halts autonomous workflows on a PR or issue."
   "agent:needs-human|d73a4a|Applied when attempt cap is hit; blocks automation, requires human review."
   "agent:attempt-1|ffd8a8|Attempt counter: first developer fix-up attempt."
@@ -181,8 +180,8 @@ echo "  [ ] 4. Verify CLAUDE_CODE_OAUTH_TOKEN and REVIEWER_BOT_PAT are accessibl
 echo "         to this repo (check Step 3 output above)."
 echo ""
 echo "  [ ] 5. Smoke test:"
-echo "         a. Create a test issue with a simple, clear acceptance criterion."
-echo "         b. Add the agent:build label to the issue."
+echo "         a. Create a Jira test ticket with a simple, clear acceptance criterion and push a throwaway branch containing the ticket key."
+echo "         b. Add the Jira agent:pr label to the ticket after pushing a branch containing the ticket key."
 echo "         c. Watch GitHub Actions — developer workflow should start in ~30s."
 echo "         d. A PR should open, then the reviewer workflow should run."
 echo "         e. If approved, auto-merge should land without human intervention."

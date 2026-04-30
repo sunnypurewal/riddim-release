@@ -21,20 +21,6 @@ JSON
   exit 0
 fi
 
-if [[ "$1 $2 $3" == "pr view agent/issue-77" ]]; then
-  cat <<JSON
-{"number":77,"url":"https://github.com/RiddimSoftware/app/pull/77","headRefName":"agent/issue-77","autoMergeRequest":$GH_AUTO_MERGE}
-JSON
-  exit 0
-fi
-
-if [[ "$1 $2 $3" == "pr view claude/custom-branch" ]]; then
-  cat <<JSON
-{"number":78,"url":"https://github.com/RiddimSoftware/app/pull/78","headRefName":"claude/custom-branch","autoMergeRequest":$GH_AUTO_MERGE}
-JSON
-  exit 0
-fi
-
 if [[ "$1 $2 $3" == "pr merge --auto" && "$4" == "--squash" ]]; then
   exit 0
 fi
@@ -86,22 +72,6 @@ assert_calls_contain() {
   echo "ok - $name"
 }
 
-export TRIGGER_TYPE=issue_labeled
-export ISSUE_NUMBER=77
-unset PR_NUMBER CLAUDE_BRANCH_NAME PR_HEAD_BEFORE || true
-export GH_HEAD_OID=after
-export GH_AUTO_MERGE=null
-assert_success "issue_labeled enables auto-merge from issue branch" run_script
-assert_calls_contain "issue_labeled views fallback branch" "pr view agent/issue-77 --json number,url,headRefName,autoMergeRequest"
-assert_calls_contain "issue_labeled runs gh pr merge" "pr merge --auto --squash https://github.com/RiddimSoftware/app/pull/77"
-
-export TRIGGER_TYPE=issue_labeled
-export ISSUE_NUMBER=77
-export CLAUDE_BRANCH_NAME=claude/custom-branch
-export GH_AUTO_MERGE=null
-assert_success "issue_labeled prefers action branch output" run_script
-assert_calls_contain "issue_labeled views action branch" "pr view claude/custom-branch --json number,url,headRefName,autoMergeRequest"
-
 export TRIGGER_TYPE=pr-fixup
 export PR_NUMBER=42
 export PR_HEAD_BEFORE=before
@@ -110,13 +80,6 @@ export GH_AUTO_MERGE=null
 assert_success "pr-fixup enables auto-merge after push" run_script
 assert_calls_contain "pr-fixup views pr number" "pr view 42 --json number,url,headRefOid,autoMergeRequest"
 assert_calls_contain "pr-fixup runs gh pr merge" "pr merge --auto --squash https://github.com/RiddimSoftware/app/pull/42"
-
-export TRIGGER_TYPE=issue-build
-export ISSUE_NUMBER=77
-unset PR_NUMBER PR_HEAD_BEFORE CLAUDE_BRANCH_NAME || true
-export GH_AUTO_MERGE=null
-assert_success "issue-build enables auto-merge from issue branch" run_script
-assert_calls_contain "issue-build views fallback branch" "pr view agent/issue-77 --json number,url,headRefName,autoMergeRequest"
 
 export TRIGGER_TYPE=pr-fixup
 export PR_NUMBER=42
@@ -140,12 +103,12 @@ export GH_AUTO_MERGE=null
 assert_success "changes_requested enables auto-merge using new trigger alias" run_script
 assert_calls_contain "changes_requested views pr number" "pr view 42 --json number,url,headRefOid,autoMergeRequest"
 
-export TRIGGER_TYPE=issue_labeled
-export ISSUE_NUMBER=77
-unset CLAUDE_BRANCH_NAME PR_HEAD_BEFORE || true
+export TRIGGER_TYPE=changes_requested
+export PR_NUMBER=42
+unset PR_HEAD_BEFORE || true
 export GH_AUTO_MERGE='{"enabledBy":{"login":"developer-bot"}}'
 assert_success "already-enabled auto-merge is idempotent" run_script
-assert_output_contains "already-enabled message" "Auto-merge already enabled for https://github.com/RiddimSoftware/app/pull/77"
+assert_output_contains "already-enabled message" "Auto-merge already enabled for https://github.com/RiddimSoftware/app/pull/42"
 if grep -Fq "pr merge --auto --squash" "$GH_CALLS"; then
   echo "not ok - already-enabled did not merge again" >&2
   cat "$GH_CALLS" >&2
