@@ -341,17 +341,15 @@ jobs:
             head_sha="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null || echo "unknown")"
 
             # 5. Post escalation comment
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "**Agent attempt cap reached (attempt ${current_attempt}/${cap}).**
-
-Automated fix-up cycles have been exhausted. Auto-merge has been disabled.
-
-@${owner} — please review the outstanding feedback and either resolve it manually or remove the \`agent:needs-human\` label once the PR is ready for another automated pass.
-
-**Summary:**
-- Attempts made: ${current_attempt}/${cap}
-- Last commit: ${head_sha}
-- Last reviewer feedback: ${last_review}
-- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+              "**Agent attempt cap reached (attempt ${current_attempt}/${cap}).**
+              Automated fix-up cycles have been exhausted. Auto-merge has been disabled.
+              @${owner} - please review the outstanding feedback and either resolve it manually or remove the \`agent:needs-human\` label once the PR is ready for another automated pass.
+              **Summary:**
+              - Attempts made: ${current_attempt}/${cap}
+              - Last commit: ${head_sha}
+              - Last reviewer feedback: ${last_review}
+              - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
           fi
 
       # ── Deterministic self-test path ──────────────────────────────────────
