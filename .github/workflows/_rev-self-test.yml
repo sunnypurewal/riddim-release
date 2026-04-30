@@ -98,7 +98,8 @@ jobs:
       mock_reviewer_verdict: ${{ inputs.expected_verdict }}
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}
+      REVIEWER_BOT_APP_ID: ${{ secrets.REVIEWER_BOT_APP_ID }}
+      REVIEWER_BOT_PRIVATE_KEY: ${{ secrets.REVIEWER_BOT_PRIVATE_KEY }}
 
   assert-and-cleanup:
     name: Assert status check and clean up

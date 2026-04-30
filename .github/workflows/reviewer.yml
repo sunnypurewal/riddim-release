@@ -57,6 +57,8 @@ on:
       REVIEWER_BOT_PRIVATE_KEY:
         description: Reviewer bot GitHub App private key (PEM).
         required: true
+      # REVIEWER_BOT_PAT replaced by GitHub App credentials (REVIEWER_BOT_APP_ID + REVIEWER_BOT_PRIVATE_KEY)
+      # Token is minted at runtime via actions/create-github-app-token@v1
 
 env:
   DEVELOPER_BOT_LOGIN: riddim-riddim-developer-bot[bot]
