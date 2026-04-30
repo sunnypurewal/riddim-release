@@ -399,32 +399,27 @@ jobs:
           if [[ "$TRIGGER_TYPE" == "issue_labeled" ]]; then
             # ── Initial build prompt ─────────────────────────────────────────
             ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title -q '.title')
+            export ISSUE_TITLE
 
-            cat >> "$GITHUB_OUTPUT" <<PROMPT_EOF
-          prompt<<PROMPT_DELIMITER
-          You are an autonomous developer agent. Your task is to implement the GitHub issue below.
+            python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from pathlib import Path
 
-          Repository: $REPO
-          Issue #$ISSUE_NUMBER: $ISSUE_TITLE
+          template = Path(".github/prompts/developer-initial-build.md").read_text()
+          issue_body = os.environ.get("ISSUE_BODY", "").rstrip() or "_No issue body provided._"
+          rendered = (
+              template
+              .replace("{{ issue_number }}", os.environ["ISSUE_NUMBER"])
+              .replace("{{ issue_body }}", issue_body)
+          )
 
-          Issue body:
-          $ISSUE_BODY
-
-          Instructions:
-          1. Create a new branch named: agent/issue-$ISSUE_NUMBER
-          2. Implement the feature or fix described in the issue. Write clean, idiomatic code.
-          3. Run the project's tests if any exist (check Makefile, package.json, etc.).
-          4. Stage all changes and commit with message: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
-          5. Push the branch to origin.
-          6. Open a pull request against main with:
-             - Title: "feat: resolve issue #$ISSUE_NUMBER — $ISSUE_TITLE"
-             - Body: describe what was changed and why, reference "Closes #$ISSUE_NUMBER"
-          7. Add the labels 'agent:build' and 'agent:attempt-1' to the PR.
-          8. Enable auto-merge: gh pr merge --auto --squash <PR-NUMBER> --repo $REPO
-
-          Important: Stay within the scope of the issue. Do not refactor unrelated code.
-          PROMPT_DELIMITER
-          PROMPT_EOF
+          print("prompt<<PROMPT_DELIMITER")
+          print(f"Repository: {os.environ['REPO']}")
+          print(f"Issue #{os.environ['ISSUE_NUMBER']}: {os.environ.get('ISSUE_TITLE', '')}")
+          print()
+          print(rendered)
+          print("PROMPT_DELIMITER")
+          PY
 
           else
             # ── Fix-up prompt ────────────────────────────────────────────────
