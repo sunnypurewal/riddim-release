@@ -23,7 +23,7 @@
 #          !contains(github.event.issue.labels.*.name, 'agent:pause')) ||
 #         (github.event_name == 'pull_request_review' &&
 #          github.event.review.state == 'changes_requested' &&
-#          github.event.review.user.login == 'reviewer-bot[bot]' &&
+#          github.event.review.user.login == 'riddim-riddim-reviewer-bot[bot]' &&
 #          !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
 #          !contains(github.event.pull_request.labels.*.name, 'agent:needs-human') &&
 #          !contains(github.event.pull_request.labels.*.name, 'agent:attempt-3'))

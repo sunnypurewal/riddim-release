@@ -1,6 +1,6 @@
 # E1 Acceptance Criteria Checklist
 
-**Epic:** RIDDIM-93 — Provision org-level developer-bot + reviewer-bot identities and shared OAuth secrets  
+**Epic:** RIDDIM-93 — Provision org-level developer-bot + riddim-reviewer-bot identities and shared OAuth secrets
 **Parent initiative:** RIDDIM-91
 
 Use this checklist to confirm E1 is fully complete before declaring the epic Done.
@@ -14,9 +14,9 @@ Use this checklist to confirm E1 is fully complete before declaring the epic Don
 - [ ] Repository access set to **Selected repositories**: `riddim-release`, `epac`
 - [ ] App installed on the org; installation ID noted
 
-## E1-S2: reviewer-bot GitHub App
+## E1-S2: riddim-reviewer-bot GitHub App
 
-- [ ] `reviewer-bot` GitHub App created in the `RiddimSoftware` org
+- [ ] `riddim-reviewer-bot` GitHub App created in the `RiddimSoftware` org
 - [ ] Same permission set as developer-bot
 - [ ] Repository access set to **Selected repositories**: `riddim-release`, `epac`
 - [ ] App installed on the org; installation ID noted
@@ -28,7 +28,7 @@ Use this checklist to confirm E1 is fully complete before declaring the epic Don
   - Scope: selected repositories — `riddim-release`, `epac`
 - [ ] `DEV_BOT_PAT` (or App installation token for developer-bot) stored as org secret
   - Scope: selected repositories — `riddim-release`, `epac`
-- [ ] `REVIEWER_BOT_PAT` (or App installation token for reviewer-bot) stored as org secret
+- [ ] `REVIEWER_BOT_PAT` (or App installation token for riddim-reviewer-bot) stored as org secret
   - Scope: selected repositories — `riddim-release`, `epac`
 - [ ] `gh secret list --repo RiddimSoftware/riddim-release` shows all three secrets
 
@@ -37,7 +37,7 @@ Use this checklist to confirm E1 is fully complete before declaring the epic Don
 - [ ] `gh api /orgs/RiddimSoftware/actions/permissions` returns `enabled_repositories: all` (or `selected`) AND `allowed_actions: all` (or `selected`)
 - [ ] A test workflow in a consuming repo (e.g. `epac`) can successfully `uses:` a reusable workflow from `riddim-release` without a permissions error
 
-  **Current status (as of 2026-04-30):**  
+  **Current status (as of 2026-04-30):**
   `enabled_repositories: all`, `allowed_actions: all`, `sha_pinning_required: false` — PASS ✓
 
 ## E1-S5: agent:* labels on both repos
@@ -55,9 +55,9 @@ Use this checklist to confirm E1 is fully complete before declaring the epic Don
 ## E1-S6: Two-identity smoke test
 
 - [ ] Throwaway PR opened on `riddim-release` **as developer-bot**
-- [ ] PR approved **as reviewer-bot** using `gh pr review --approve`
+- [ ] PR approved **as riddim-reviewer-bot** using `gh pr review --approve`
 - [ ] GitHub accepted the approval (no "can't approve your own PR" error)
-- [ ] Approval attributed to reviewer-bot on the PR page
+- [ ] Approval attributed to riddim-reviewer-bot on the PR page
 - [ ] Smoke-test PR closed and branch deleted
 - [ ] Results posted as evidence comment on RIDDIM-91 and RIDDIM-93
 

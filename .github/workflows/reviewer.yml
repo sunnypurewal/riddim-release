@@ -11,7 +11,7 @@
 #   reviewer:
 #     if: >-
 #       github.event.pull_request.user.login == 'developer-bot' &&
-#       github.event.sender.login != 'reviewer-bot' &&
+#       github.event.sender.login != 'riddim-reviewer-bot' &&
 #       !contains(github.event.pull_request.labels.*.name, 'agent:pause')
 #     uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
 #     with:
@@ -22,7 +22,7 @@
 #
 # Constants shared with developer.yml consumers:
 # - Developer bot login: developer-bot
-# - Reviewer bot login: reviewer-bot
+# - Reviewer bot login: riddim-reviewer-bot
 # - Pause label: agent:pause
 # - Human-review label: agent:needs-human
 # - Required status check: reviewer-agent-passed
@@ -51,7 +51,7 @@ on:
 
 env:
   DEVELOPER_BOT_LOGIN: developer-bot
-  REVIEWER_BOT_LOGIN: reviewer-bot
+  REVIEWER_BOT_LOGIN: riddim-reviewer-bot
   PAUSE_LABEL: agent:pause
   NEEDS_HUMAN_LABEL: agent:needs-human
   REVIEWER_STATUS_CHECK: reviewer-agent-passed

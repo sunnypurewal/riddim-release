@@ -3,7 +3,7 @@
 #
 # PURPOSE:
 #   Scaffolds and documents the manual + automatable steps required to provision
-#   the developer-bot and reviewer-bot GitHub App identities and org-level secrets
+#   the developer-bot and riddim-reviewer-bot GitHub App identities and org-level secrets
 #   for the RIDDIM-91 autonomous PR loop.
 #
 # USAGE:
@@ -109,16 +109,16 @@ step_check_policy() {
 # ── Step: create-apps ───────────────────────────────────────────────────────
 step_create_apps() {
   human_gate "$(cat <<'INSTRUCTIONS'
-STEP: Create developer-bot and reviewer-bot GitHub Apps
+STEP: Create developer-bot and riddim-reviewer-bot GitHub Apps
 
 GitHub App creation requires a browser + org-admin access. The gh CLI does not
-support App creation. Follow these steps for EACH app (developer-bot, reviewer-bot):
+support App creation. Follow these steps for EACH app (developer-bot, riddim-reviewer-bot):
 
 1. Navigate to:
    https://github.com/organizations/RiddimSoftware/settings/apps/new
 
 2. Fill in the form:
-   GitHub App name:   developer-bot   (or reviewer-bot)
+   GitHub App name:   developer-bot   (or riddim-reviewer-bot)
    Homepage URL:      https://github.com/RiddimSoftware/riddim-release
    Webhook:           UNCHECK "Active" (we don't need webhook events)
 
@@ -141,7 +141,7 @@ support App creation. Follow these steps for EACH app (developer-bot, reviewer-b
    Settings > GitHub Apps > developer-bot > Install App
    Choose: "Selected repositories" → add riddim-release and epac
 
-8. Repeat for reviewer-bot.
+8. Repeat for riddim-reviewer-bot.
 
 DECISION REQUIRED (Max OAuth token):
    The CLAUDE_CODE_OAUTH_TOKEN is a per-user Max plan OAuth token.
@@ -183,7 +183,7 @@ Replace placeholders with actual values.
    gh secret set REVIEWER_BOT_PAT \
      --org RiddimSoftware \
      --repos riddim-release,epac \
-     --body "<reviewer-bot token>"
+     --body "<riddim-reviewer-bot token>"
 
 3. Verify secrets are visible in the repo:
    gh secret list --repo RiddimSoftware/riddim-release
@@ -200,7 +200,7 @@ step_smoke_test() {
 STEP: Smoke-test the two-identity PR flow
 
 After secrets are stored, validate that GitHub accepts approvals from a
-separate identity (reviewer-bot cannot approve developer-bot's own PR).
+separate identity (riddim-reviewer-bot cannot approve developer-bot's own PR).
 
 1. As developer-bot, create a throwaway branch and open a PR:
    git checkout -b smoke-test/e1-identity-check
@@ -213,16 +213,16 @@ separate identity (reviewer-bot cannot approve developer-bot's own PR).
      --body "Smoke test for RIDDIM-93 — delete after verification." \
      --base main
 
-2. As reviewer-bot, approve the PR:
+2. As riddim-reviewer-bot, approve the PR:
    gh pr review <PR-NUMBER> \
      --repo RiddimSoftware/riddim-release \
      --approve \
-     --body "Smoke test approval from reviewer-bot."
+     --body "Smoke test approval from riddim-reviewer-bot."
 
 3. Verify on the PR page:
-   - The approval is attributed to reviewer-bot (not developer-bot)
+   - The approval is attributed to riddim-reviewer-bot (not developer-bot)
    - No "you can't approve your own PR" error appears
-   - GitHub shows 1 approval from reviewer-bot
+   - GitHub shows 1 approval from riddim-reviewer-bot
 
 4. Close and delete the smoke-test PR:
    gh pr close <PR-NUMBER> --repo RiddimSoftware/riddim-release --delete-branch

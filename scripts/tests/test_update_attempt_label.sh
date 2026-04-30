@@ -40,7 +40,7 @@ case "$cmd" in
         if [[ "$args" == *"--json labels"* ]]; then
           tr ',' '\n' <<< "$labels" | sed '/^$/d'
         elif [[ "$args" == *"--json reviews"* ]]; then
-          echo "review:reviewer-bot:2026-04-30T00:00:00Z"
+          echo "review:riddim-reviewer-bot:2026-04-30T00:00:00Z"
         else
           echo "unsupported pr view: $args" >&2
           exit 2
@@ -138,7 +138,7 @@ run_counter fixup 123 >/dev/null
 assert_labels "automate,agent:attempt-3"
 assert_log_count "edit --add-label agent:attempt-3" 1
 assert_log_count "edit --remove-label agent:attempt-2" 1
-assert_log_count "comment <!-- agent-attempt-counter: source=review:reviewer-bot:2026-04-30T00:00:00Z; attempt=3 -->" 1
+assert_log_count "comment <!-- agent-attempt-counter: source=review:riddim-reviewer-bot:2026-04-30T00:00:00Z; attempt=3 -->" 1
 
 run_counter fixup 123 >/dev/null
 assert_labels "automate,agent:attempt-3"

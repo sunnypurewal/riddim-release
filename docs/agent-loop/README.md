@@ -12,7 +12,7 @@
 The autonomous PR loop handles the full developer → review → merge cycle without human intervention for routine changes. Three actors collaborate:
 
 1. **Developer bot** (`developer-bot`) — triggered by an `agent:build` label on an issue. Opens a PR implementing the issue body as acceptance criteria.
-2. **Reviewer bot** (`reviewer-bot`) — triggered when the developer bot opens or updates a PR. Reviews the diff against acceptance criteria and either approves + enables auto-merge, or requests changes.
+2. **Reviewer bot** (`riddim-reviewer-bot`) — triggered when the developer bot opens or updates a PR. Reviews the diff against acceptance criteria and either approves + enables auto-merge, or requests changes.
 3. **GitHub auto-merge** — merges the PR once the `reviewer-agent-passed` required status check passes and all branch protection rules are satisfied.
 
 The reusable workflows live in this repo (`RiddimSoftware/riddim-release`) and are called from a thin trigger wrapper in each consumer repo.
@@ -24,7 +24,7 @@ The reusable workflows live in this repo (`RiddimSoftware/riddim-release`) and a
 Before enrolling a consumer repo, confirm all of the following are in place at the org level:
 
 - [ ] Org secrets set: `CLAUDE_CODE_OAUTH_TOKEN`, `REVIEWER_BOT_PAT` — see `docs/agent-loop/e1-checklist.md`
-- [ ] GitHub Apps installed at org scope: `developer-bot` and `reviewer-bot`
+- [ ] GitHub Apps installed at org scope: `developer-bot` and `riddim-reviewer-bot`
 - [ ] `RiddimSoftware/riddim-release` is on `main` with the reusable workflows present:
   - `.github/workflows/developer.yml`
   - `.github/workflows/reviewer.yml`
