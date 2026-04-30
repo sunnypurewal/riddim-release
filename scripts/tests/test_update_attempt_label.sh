@@ -148,4 +148,13 @@ assert_log_count "agent:attempt-4" 0
 run_counter initial 123 >/dev/null
 assert_labels "automate,agent:attempt-1"
 
+echo "labels=agent:attempt-3,automate" > "$state_file"
+echo "comments=" >> "$state_file"
+: > "$log_file"
+
+run_counter fixup 123 >/dev/null
+assert_labels "automate,agent:attempt-4"
+assert_log_count "edit --add-label agent:attempt-4" 1
+assert_log_count "edit --remove-label agent:attempt-3" 1
+
 echo "update_attempt_label tests passed."

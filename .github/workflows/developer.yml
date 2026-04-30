@@ -25,8 +25,7 @@
 #          github.event.review.state == 'changes_requested' &&
 #          github.event.review.user.login == 'reviewer-bot[bot]' &&
 #          !contains(github.event.pull_request.labels.*.name, 'agent:pause') &&
-#          !contains(github.event.pull_request.labels.*.name, 'agent:needs-human') &&
-#          !contains(github.event.pull_request.labels.*.name, 'agent:attempt-3'))
+#          !contains(github.event.pull_request.labels.*.name, 'agent:needs-human'))
 #       uses: RiddimSoftware/riddim-release/.github/workflows/developer.yml@main
 #       secrets:
 #         claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -133,9 +132,22 @@ jobs:
         run: |
           bash .github/scripts/update_attempt_label.sh fixup "${{ inputs.pr_number }}"
 
+      - name: Handle attempt cap
+        id: attempt_cap
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        env:
+          GH_TOKEN: ${{ secrets.dev_bot_pat }}
+          REPO: ${{ github.repository }}
+          AGENT_ATTEMPT_CAP: ${{ vars.AGENT_ATTEMPT_CAP }}
+          AGENT_FALLBACK_OWNER: ${{ vars.AGENT_FALLBACK_OWNER || 'SunnyPurewal' }}
+          AGENT_CODEOWNERS_PATH: ${{ vars.AGENT_CODEOWNERS_PATH || 'README.md' }}
+        run: |
+          bash .github/scripts/handle_attempt_cap.sh "${{ inputs.pr_number }}"
+
       # ── Assemble prompt ───────────────────────────────────────────────────
       - name: Assemble agent prompt
         id: prompt
+        if: steps.attempt_cap.outputs.cap_hit != 'true'
         env:
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
@@ -224,6 +236,7 @@ jobs:
 
       # ── Run Claude Code agent ─────────────────────────────────────────────
       - name: Run developer agent
+        if: steps.attempt_cap.outputs.cap_hit != 'true'
         uses: anthropics/claude-code-action@v1
         timeout-minutes: 25
         with:
@@ -232,7 +245,7 @@ jobs:
 
       # ── Post-run: ensure auto-merge is set on the PR ──────────────────────
       - name: Enable auto-merge on PR (fix-up path)
-        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0
+        if: inputs.trigger_type == 'changes_requested' && inputs.pr_number != 0 && steps.attempt_cap.outputs.cap_hit != 'true'
         env:
           GH_TOKEN: ${{ secrets.dev_bot_pat }}
           REPO: ${{ github.repository }}
