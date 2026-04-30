@@ -235,6 +235,7 @@ jobs:
           echo "Dry run: skipped signing, archive, TestFlight upload, dSYM upload, and keychain setup."
 
       - name: Build and upload to TestFlight
+        id: build-number
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ inputs.ios_workdir }}
         env:
@@ -251,17 +252,6 @@ jobs:
             team_id:${{ inputs.team_id }} \
             xcodeproj:${{ inputs.xcodeproj_path }} \
             extra_bundle_ids:"${{ inputs.extra_bundle_ids }}"
-
-      - name: Read build number
-        id: build-number
-        if: ${{ !inputs.dry_run }}
-        working-directory: ${{ inputs.ios_workdir }}
-        run: |
-          if [ ! -s build_number.txt ]; then
-            echo "::error::build_number.txt was not written by the Fastlane deploy lane"
-            exit 1
-          fi
-          echo "build_number=$(cat build_number.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Upload dSYMs to Sentry
         if: ${{ !inputs.dry_run }}
