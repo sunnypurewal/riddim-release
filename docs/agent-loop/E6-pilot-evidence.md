@@ -89,3 +89,48 @@ Not captured — no Claude invocation occurred. The developer agent never starte
 2. **startup_failure vs failure.** Pilot 1 produced `conclusion: failure` with zero jobs; this retry produced `conclusion: startup_failure` with zero jobs. Both result in no developer agent running, but `startup_failure` indicates GitHub detected the input mismatch before attempting job evaluation — a slightly different failure mode suggesting schema validation at parse time.
 3. **Pre-flight checks are insufficient.** The pre-flight checks verified `trigger_type` and bot login fixes but did not verify the `rebase-watcher` input compatibility. A more complete pre-flight would validate all `with:` keys against each referenced reusable workflow's declared inputs.
 4. **The loop has never successfully completed a round-trip on epac.** Every "Autonomous PR Loop" run observed in this and the previous pilot shows `failure` or `startup_failure`. The infrastructure is not yet in a state where a live pilot can succeed.
+
+---
+
+## Pilot 1 (final) — Trivial change (RIDDIM-129)
+
+**Issue:** https://github.com/RiddimSoftware/epac/issues/310
+**PR:** not opened — developer workflow failed before opening a PR
+**Outcome:** failed
+**Wall-clock:** label→failure in 13 seconds; no PR produced
+
+### Phase timing
+
+| Phase | Time | Duration |
+|-------|------|---------|
+| agent:build applied | 2026-04-30T06:56:47Z | — |
+| Developer run started | 2026-04-30T06:56:50Z | +3s |
+| Developer run completed | 2026-04-30T06:57:03Z | +13s (failure) |
+| PR opened | — | — |
+| Reviewer run started | — | — |
+| Reviewer run completed | — | — |
+| Auto-merge enabled | — | — |
+| PR merged | — | — |
+
+### Code quality assessment
+
+No agent-generated code was produced. The developer workflow failed at secret validation before Claude was invoked.
+
+### Observations
+
+- **`trigger_type` fix confirmed working**: The previous pilot's `trigger_type: issue-build` mismatch was fixed on `main` before this pilot. The developer job (`73724145916`) started correctly (unlike the previous 0-job run).
+- **New blocker: `dev_bot_pat` secret not found**. The `developer.yml` reusable workflow declares `dev_bot_pat` and `claude_code_oauth_token` as required named secrets. The org has `CLAUDE_CODE_OAUTH_TOKEN` but does NOT have `DEV_BOT_PAT` — it has `DEV_BOT_APP_ID` + `DEV_BOT_PRIVATE_KEY` (GitHub App credentials). The workflow error: `Secret dev_bot_pat is required, but not provided while calling.`
+- **Root cause**: `developer.yml` was written expecting a PAT-based authentication model, but the org migrated to GitHub App auth (`DEV_BOT_APP_ID`/`DEV_BOT_PRIVATE_KEY`). The reusable workflow needs to be updated to generate a token from the App credentials before use, or a `DEV_BOT_PAT` secret must be added at org level.
+- **Same gap exists in `reviewer.yml`**: it also requires `REVIEWER_BOT_PAT`, while the org has `REVIEWER_BOT_APP_ID` + `REVIEWER_BOT_PRIVATE_KEY`.
+- **`secrets: inherit` is not the issue**: the problem is the secret simply doesn't exist with the expected name, not a passing mechanism failure.
+- **GitHub Issues was disabled** (same as Pilot 1 attempt): had to be re-enabled via API before issue creation. Suggests the setting was reverted between pilots. The enrollment checklist still needs this requirement.
+
+### Token/cost notes
+
+Not available — the Claude agent was never invoked; workflow failed at GitHub Actions secret validation.
+
+### Required fixes before Pilot 2
+
+1. Either add `DEV_BOT_PAT` org secret (generate a PAT for the developer-bot account), OR update `developer.yml` to use `actions/create-github-app-token@v2` with `dev_bot_app_id` + `dev_bot_private_key` before any step that needs a GitHub token.
+2. Same fix for `reviewer.yml` with `REVIEWER_BOT_PAT` / `REVIEWER_BOT_APP_ID` + `REVIEWER_BOT_PRIVATE_KEY`.
+3. Add "GitHub Issues must be enabled" to `docs/agent-loop-enrollment.md` and ensure the setting persists.
