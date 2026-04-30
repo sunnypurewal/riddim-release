@@ -7,7 +7,7 @@
 # Usage:
 #   gh workflow run developer-self-test.yml \
 #     --repo RiddimSoftware/riddim-release \
-#     --field issue_number=1 \
+#     --field pr_number=1 \
 #     --field dry_run=true
 
 name: Developer Agent Self Test
@@ -15,10 +15,10 @@ name: Developer Agent Self Test
 on:
   workflow_dispatch:
     inputs:
-      issue_number:
-        description: "Synthetic issue number to use in prompt (does not need to exist)"
+      pr_number:
+        description: "Synthetic PR number to use in prompt (does not need to exist in dry run)"
         required: false
-        default: "0"
+        default: "1"
         type: string
       dry_run:
         description: "If true, print the prompt but do not invoke the agent"
@@ -34,15 +34,15 @@ jobs:
     steps:
       - name: Print synthetic call parameters
         run: |
-          echo "issue_number: ${{ inputs.issue_number }}"
+          echo "pr_number: ${{ inputs.pr_number }}"
           echo "dry_run: ${{ inputs.dry_run }}"
           echo ""
           echo "Would call developer.yml with:"
-          echo "  trigger_type: issue_labeled"
-          echo "  issue_number: ${{ inputs.issue_number }}"
-          echo "  issue_body: <synthetic smoke test body>"
+          echo "  trigger_type: changes_requested"
+          echo "  pr_number: ${{ inputs.pr_number }}"
+          echo "  review_comments: <synthetic smoke test feedback>"
           echo ""
-          echo "No agent was invoked. Set dry_run=false to run the full test."
+          echo "No agent was invoked. Set dry_run=false to run the deterministic self-test."
 
   full-test:
     name: Developer Self Test Full Run
@@ -53,19 +53,13 @@ jobs:
       DEV_BOT_APP_ID: ${{ secrets.DEV_BOT_APP_ID }}
       DEV_BOT_PRIVATE_KEY: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
     with:
-      trigger_type: issue_labeled
-      issue_number: ${{ fromJSON(inputs.issue_number) }}
-      issue_body: |
-        ## Self-test issue
+      trigger_type: changes_requested
+      pr_number: ${{ fromJSON(inputs.pr_number) }}
+      review_comments: |
+        ## Self-test review feedback
 
-        This is a synthetic issue used to validate the developer-agent workflow.
-
-        Add a file `smoke-test/developer-self-test.md` with the content:
-        ```
-        # Developer Agent Self Test
-        This file was created by the developer-agent self-test workflow.
-        Run: ${{ github.run_id }}
-        ```
-
-        Open a PR against main, title "chore: developer self-test run ${{ github.run_id }}".
-        Close it after creation -- this is only a smoke test.
+        This is a synthetic changes-requested payload used to validate the
+        developer-agent workflow fix-up path.
+      prompt_override: "RIDDIM-111 deterministic self-test. Do not invoke the agent."
+      self_test_mode: true
+      self_test_branch: selftest/${{ github.run_id }}
