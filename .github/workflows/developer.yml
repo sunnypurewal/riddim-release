@@ -87,7 +87,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -96,11 +96,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  developer-stub:
-    name: Developer workflow stub
+  developer:
+    name: Developer agent
     runs-on: ubuntu-latest
     steps:
-      - name: Print sanitized developer context
+      - name: Validate developer context
         shell: bash
         env:
           TRIGGER_TYPE: ${{ inputs.trigger_type }}
@@ -121,7 +121,7 @@ jobs:
           esac
 
           {
-            echo "## Developer workflow stub"
+            echo "## Developer workflow"
             echo ""
             echo "- Trigger type: ${TRIGGER_TYPE}"
             echo "- Issue number: ${ISSUE_NUMBER:-<none>}"
@@ -130,5 +130,115 @@ jobs:
             echo "- Review comments bytes: ${#REVIEW_COMMENTS}"
             echo "- Prompt override bytes: ${#PROMPT_OVERRIDE}"
             echo ""
-            echo "No agent is invoked by this skeleton. Prompt wiring lands in E2-S2/E2-S3."
+            echo "Initial-build prompt wiring is active for issue-build runs."
+            echo "Fix-up prompt wiring is active for pr-fixup runs."
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out workflow repository
+        uses: actions/checkout@v4
+
+      - name: Render initial-build prompt
+        id: initial_prompt
+        if: ${{ inputs.trigger_type == 'issue-build' }}
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_BODY: ${{ inputs.issue_body }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            echo "::error::issue_number is required for issue-build runs."
+            exit 1
+          fi
+
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            rendered_prompt="$PROMPT_OVERRIDE"
+          else
+            template_path=".github/prompts/developer-initial-build.md"
+            rendered_prompt="$(<"$template_path")"
+            rendered_prompt="${rendered_prompt//\{\{ issue_number \}\}/$ISSUE_NUMBER}"
+            rendered_prompt="${rendered_prompt//\{\{ issue_body \}\}/$ISSUE_BODY}"
+          fi
+
+          {
+            echo "prompt<<EOF"
+            printf '%s\n' "$rendered_prompt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Initial-build prompt"
+            echo ""
+            echo "- Issue number: $ISSUE_NUMBER"
+            echo "- Rendered prompt bytes: ${#rendered_prompt}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run initial-build developer agent
+        if: ${{ inputs.trigger_type == 'issue-build' && env.ACT != 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.DEV_BOT_PAT }}
+          base_branch: main
+          prompt: ${{ steps.initial_prompt.outputs.prompt }}
+
+      - name: Skip agent during local act smoke tests
+        if: ${{ inputs.trigger_type == 'issue-build' && env.ACT == 'true' }}
+        shell: bash
+        run: |
+          echo "Skipping claude-code-action because ACT=true local smoke test."
+
+      - name: Render fix-up prompt
+        id: fixup_prompt
+        if: ${{ inputs.trigger_type == 'pr-fixup' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEW_COMMENTS: ${{ inputs.review_comments }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "::error::pr_number is required for pr-fixup runs."
+            exit 1
+          fi
+
+          if [[ -n "$PROMPT_OVERRIDE" ]]; then
+            rendered_prompt="$PROMPT_OVERRIDE"
+          else
+            template_path=".github/prompts/developer-fixup.md"
+            rendered_prompt="$(<"$template_path")"
+            rendered_prompt="${rendered_prompt//\{\{ pr_number \}\}/$PR_NUMBER}"
+            rendered_prompt="${rendered_prompt//\{\{ review_comments \}\}/$REVIEW_COMMENTS}"
+          fi
+
+          {
+            echo "prompt<<EOF"
+            printf '%s\n' "$rendered_prompt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Fix-up prompt"
+            echo ""
+            echo "- PR number: $PR_NUMBER"
+            echo "- Rendered prompt bytes: ${#rendered_prompt}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run fix-up developer agent
+        if: ${{ inputs.trigger_type == 'pr-fixup' && env.ACT != 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.DEV_BOT_PAT }}
+          base_branch: main
+          prompt: ${{ steps.fixup_prompt.outputs.prompt }}
+
+      - name: Skip fix-up agent during local act smoke tests
+        if: ${{ inputs.trigger_type == 'pr-fixup' && env.ACT == 'true' }}
+        shell: bash
+        run: |
+          echo "Skipping fix-up claude-code-action because ACT=true local smoke test."
