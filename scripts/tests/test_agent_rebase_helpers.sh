@@ -28,20 +28,12 @@ git -C "$repo" init -q -b main
 git -C "$repo" config user.email test@example.com
 git -C "$repo" config user.name Test
 
-current_branch="$(git -C "$repo" branch --show-current)"
-if [ "$current_branch" != "main" ]; then
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/main"; then
-    git -C "$repo" checkout -q main
-  else
-    git -C "$repo" branch -m main
-  fi
-fi
-
 cat > "$repo/file.txt" <<'BASE'
 alpha
 context
 old line
 omega
+tail
 BASE
 git -C "$repo" add file.txt
 git -C "$repo" commit -q -m base
@@ -51,6 +43,7 @@ alpha
 context
 feature line
 omega
+tail
 FEATURE
 git -C "$repo" commit -am feature -q
 git -C "$repo" checkout -q main
@@ -59,6 +52,7 @@ alpha
 context
 main line
 omega
+tail
 MAIN
 git -C "$repo" commit -am main -q
 git -C "$repo" checkout -q feature
@@ -73,6 +67,7 @@ set -e
 
 grep -F "file.txt" "$repo/.agent-rebase/conflicted-files.txt" >/dev/null
 grep -F "Autonomous conflict-resolution context" "$repo/.agent-rebase/conflict-context.md" >/dev/null
+grep -F "RIDDIM-137" "$repo/.agent-rebase/conflict-context.md" >/dev/null
 
 cat > "$repo/file.txt" <<'RESOLVED'
 alpha
@@ -80,6 +75,7 @@ context
 feature line
 main line
 omega
+tail
 RESOLVED
 (
   cd "$repo"
@@ -94,12 +90,30 @@ context
 feature line
 main line
 omega
+tail
 BROKEN
 if (
   cd "$repo"
   "$validate_script" .agent-rebase/conflicted-files.txt .agent-rebase/outside-snapshot.json >/tmp/validate-bad.out 2>&1
 ); then
   echo "expected validation to fail when non-conflict context gains inserted lines" >&2
+  exit 1
+fi
+
+cat > "$repo/file.txt" <<'BROKEN_INSIDE'
+alpha
+context
+feature line
+main line
+omega
+inserted inside preserved context
+tail
+BROKEN_INSIDE
+if (
+  cd "$repo"
+  "$validate_script" .agent-rebase/conflicted-files.txt .agent-rebase/outside-snapshot.json >/tmp/validate-bad-inside.out 2>&1
+); then
+  echo "expected validation to fail when non-conflict context gains inserted lines inside a preserved segment" >&2
   exit 1
 fi
 

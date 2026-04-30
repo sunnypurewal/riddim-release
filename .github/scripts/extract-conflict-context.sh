@@ -47,10 +47,10 @@ fi
 
 pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json title,body,url,headRefName,baseRefName 2>/dev/null || printf '{}')"
 
-jira_key="$(printf '%s' "$pr_json" | python3 - <<'PY'
-import json, re, sys
+jira_key="$(PR_JSON="$pr_json" python3 - <<'PY'
+import json, os, re
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(os.environ.get("PR_JSON") or "{}")
 except Exception:
     data = {}
 text = "\n".join(str(data.get(k) or "") for k in ("title", "body"))
@@ -61,12 +61,13 @@ PY
 
 jira_context=""
 if [[ -n "$jira_key" && -n "${ATLASSIAN_BASE_URL:-}" && -n "${ATLASSIAN_API_USER:-}" && -n "${ATLASSIAN_API_TOKEN:-}" ]]; then
-  jira_context="$(curl -fsS -u "${ATLASSIAN_API_USER}:${ATLASSIAN_API_TOKEN}" \
+  jira_payload="$(curl -fsS -u "${ATLASSIAN_API_USER}:${ATLASSIAN_API_TOKEN}" \
     "${ATLASSIAN_BASE_URL%/}/rest/api/3/issue/${jira_key}?fields=summary,description" \
-    2>/dev/null | python3 - <<'PY' || true
-import json, sys
+    2>/dev/null || true)"
+  jira_context="$(JIRA_JSON="$jira_payload" python3 - <<'PY' || true
+import json, os, sys
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(os.environ.get("JIRA_JSON") or "{}")
 except Exception:
     sys.exit(0)
 fields = data.get("fields") or {}
@@ -125,10 +126,10 @@ PY
   echo "Base branch: \`$BASE_BRANCH\`"
   echo
   echo "## Pull request metadata"
-  printf '%s' "$pr_json" | python3 - <<'PY'
-import json, sys
+  PR_JSON="$pr_json" python3 - <<'PY'
+import json, os
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(os.environ.get("PR_JSON") or "{}")
 except Exception:
     data = {}
 for key, label in (("title", "Title"), ("url", "URL"), ("headRefName", "Head"), ("baseRefName", "Base")):

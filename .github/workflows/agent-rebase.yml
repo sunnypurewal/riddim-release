@@ -104,7 +104,9 @@ jobs:
       - name: Checkout workflow helpers
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.consumer_repo || github.repository }}
+          repository: RiddimSoftware/riddim-release
+          path: riddim-release
+          ref: main
           token: ${{ secrets.DEV_BOT_PAT || github.token }}
           fetch-depth: 0
 
@@ -170,7 +172,7 @@ jobs:
           REBASE_MAX_LINES: ${{ inputs.rebase_max_lines || 200 }}
         run: |
           set -euo pipefail
-          output="$(bash .github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "${{ inputs.consumer_repo || github.repository }}")"
+          output="$(bash riddim-release/.github/scripts/rebase-guard.sh "${{ inputs.pr_number }}" "${{ inputs.consumer_repo || github.repository }}")"
           decision="$(head -n 1 <<< "$output")"
           reason_json="$(tail -n 1 <<< "$output")"
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
@@ -224,7 +226,7 @@ jobs:
           CONSUMER_REPO: ${{ inputs.consumer_repo || github.repository }}
         run: |
           set -euo pipefail
-          bash .github/scripts/extract-conflict-context.sh \
+          bash riddim-release/.github/scripts/extract-conflict-context.sh \
             "${{ inputs.pr_number }}" \
             "$CONSUMER_REPO" \
             "${{ inputs.base_branch }}" \
@@ -237,7 +239,7 @@ jobs:
         run: |
           {
             echo "prompt<<EOF"
-            cat .github/agent-prompts/conflict-resolver-v1.md
+            cat riddim-release/.github/agent-prompts/conflict-resolver-v1.md
             echo
             cat "$CONFLICT_CONTEXT_DIR/conflict-context.md"
             echo "EOF"
@@ -261,7 +263,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          if ! bash .github/scripts/validate-conflict-resolution.sh \
+          if ! bash riddim-release/.github/scripts/validate-conflict-resolution.sh \
             "$CONFLICT_CONTEXT_DIR/conflicted-files.txt" \
             "$CONFLICT_CONTEXT_DIR/outside-snapshot.json"; then
             diagnostic="$(mktemp)"

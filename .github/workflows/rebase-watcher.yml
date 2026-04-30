@@ -11,7 +11,7 @@
 #   a 15-minute cron backstop, this workflow:
 #     1. Lists all open PRs labelled `autonomous` in the consumer repo.
 #     2. Classifies each by mergeable_state using get-mergeable-state.sh.
-#     3. Dispatches auto-rebase.yml for `behind` PRs (mechanical rebase).
+#     3. Dispatches agent-rebase.yml for `behind` PRs (mechanical rebase).
 #     4. Dispatches agent-rebase.yml (E9) for `dirty` PRs (conflict resolution).
 #     5. Logs and skips `clean`, `blocked`, `unstable`, and `unknown` PRs.
 #
@@ -37,7 +37,7 @@
 #                 `contents:write`, `pull_requests:write`, `actions:write`.
 #
 # CONCURRENCY:
-#   A per-PR concurrency group in auto-rebase.yml handles individual PR races.
+#   A per-PR concurrency group in agent-rebase.yml handles individual PR races.
 #   This watcher runs at most one instance at a time per repo (concurrency group
 #   below) — if main advances mid-scan, the new push trigger will supersede.
 # ============================================================================
@@ -173,15 +173,13 @@ jobs:
             case "$state" in
               behind)
                 if [[ "$DRY_RUN" == "true" ]]; then
-                  echo "  [dry-run] Would dispatch auto-rebase for PR #${pr_number}."
+                  echo "  [dry-run] Would dispatch agent-rebase for PR #${pr_number}."
                 else
-                  echo "  Dispatching auto-rebase for PR #${pr_number}..."
-                  gh workflow run auto-rebase.yml \
+                  echo "  Dispatching agent-rebase for PR #${pr_number}..."
+                  gh workflow run agent-rebase.yml \
                     --repo RiddimSoftware/riddim-release \
                     --field consumer_repo="$CONSUMER_REPO" \
-                    --field pr_number="$pr_number" \
-                    --field pr_head_sha="$head_sha" \
-                    --field pr_branch="$head_ref" \
+                    --field pr_number="$pr_number" \ \
                     --field base_branch="$base_ref"
                   riddim-release/.github/scripts/update-watcher-status.sh \
                     "$pr_number" "$CONSUMER_REPO" "$state" "dispatched auto-rebase" \
@@ -237,7 +235,7 @@ jobs:
 
           echo ""
           echo "=== Watcher summary ==="
-          echo "  behind → auto-rebase dispatched: ${routed_behind}"
+          echo "  behind → agent-rebase dispatched: ${routed_behind}"
           echo "  dirty  → agent-rebase dispatched: ${routed_dirty}"
           echo "  skipped (clean/blocked/unstable/paused): ${skipped}"
           echo "  unknown/errors: ${errors}"
