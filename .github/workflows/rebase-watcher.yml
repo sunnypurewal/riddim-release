@@ -106,14 +106,17 @@ jobs:
           page=1
           all_prs="[]"
           while true; do
-            batch="$(gh api \
+            page_payload="$(gh api \
               "repos/${CONSUMER_REPO}/pulls?state=open&per_page=100&page=${page}" \
-              --jq "[.[] | select(.labels[].name == \"${AUTONOMOUS_LABEL}\") | {number: .number, head_sha: .head.sha, head_ref: .head.ref, base_ref: .base.ref}]")"
+              )"
+
+            page_count="$(printf '%s' "$page_payload" | jq 'length')"
+            batch="$(printf '%s' "$page_payload" | jq "[.[] | select(.labels[].name == \"${AUTONOMOUS_LABEL}\") | {number: .number, head_sha: .head.sha, head_ref: .head.ref, base_ref: .base.ref}]")"
 
             count="$(printf '%s' "$batch" | jq 'length')"
             all_prs="$(printf '%s\n%s' "$all_prs" "$batch" | jq -s 'add | unique_by(.number)')"
 
-            if (( count < 100 )); then
+            if (( page_count < 100 )); then
               break
             fi
             page=$(( page + 1 ))
