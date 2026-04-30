@@ -76,7 +76,7 @@ jobs:
     name: Reviewer agent
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       checks: write
       pull-requests: write
       issues: write
