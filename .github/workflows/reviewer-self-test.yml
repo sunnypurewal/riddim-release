@@ -39,5 +39,5 @@ jobs:
       pr_number: ${{ fromJson(inputs.pr_number) }}
       prompt_override: ${{ inputs.prompt_override }}
     secrets:
-      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      reviewer_bot_pat: ${{ secrets.REVIEWER_BOT_PAT }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      REVIEWER_BOT_PAT: ${{ secrets.REVIEWER_BOT_PAT }}

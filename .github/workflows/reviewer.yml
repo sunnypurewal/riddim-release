@@ -41,6 +41,11 @@ on:
         required: false
         type: string
         default: ""
+      prompt_override:
+        description: "Optional: override the reviewer prompt (for self-test use only)."
+        required: false
+        type: string
+        default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: OAuth token used by claude-code-action in later wiring.
@@ -216,6 +221,9 @@ jobs:
       - name: Load reviewer prompt
         if: ${{ steps.guard.outputs.exit_code == '0' }}
         id: reviewer_prompt
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PROMPT_OVERRIDE: ${{ inputs.prompt_override }}
         run: |
           {
             echo "prompt<<EOF"
@@ -223,10 +231,13 @@ jobs:
             echo
             echo "Review PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}."
             echo "The required status-check name is ${REVIEWER_STATUS_CHECK}."
+            if [[ -n "${PROMPT_OVERRIDE}" ]]; then
+              echo
+              echo "Prompt override (applies after baseline safety and instruction text):"
+              printf '%s\n' "${PROMPT_OVERRIDE}"
+            fi
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
-        env:
-          PR_NUMBER: ${{ inputs.pr_number }}
 
       - name: Validate reviewer prompt for act
         if: ${{ env.ACT == 'true' && steps.guard.outputs.exit_code == '0' }}
@@ -344,4 +355,36 @@ jobs:
 
           if [[ "${conclusion}" != "success" ]]; then
             exit 1
+          fi
+
+      # Pre-merge mergeable_state re-check
+      # --------------------------------------------------------------------
+      # Before enabling auto-merge, query the PR's mergeable_state to ensure
+      # GitHub has finished computing mergeability. If the state is not "clean",
+      # we skip gh pr merge --auto and log the state so the orchestrator (E8)
+      # can retry or escalate. This is the E8 polling helper integration point;
+      # E8 will later extract this logic to a shared script.
+      # Possible mergeable_state values: clean, dirty, blocked, behind,
+      # unstable, draft, unknown.
+      - name: Pre-merge mergeable_state re-check
+        if: ${{ steps.reviewer_verdict.outputs.verdict == 'APPROVED' && steps.guard.outputs.exit_code == '0' && inputs.mock_reviewer_verdict == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "act dry-run: skip mergeable_state check and auto-merge"
+            exit 0
+          fi
+
+          mergeable_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '.mergeable_state')"
+
+          echo "PR #${PR_NUMBER} mergeable_state=${mergeable_state}"
+
+          if [[ "${mergeable_state}" == "clean" ]]; then
+            echo "mergeable_state is clean — enabling auto-merge."
+            gh pr merge "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --auto --squash
+          else
+            echo "mergeable_state is '${mergeable_state}' — skipping gh pr merge --auto. The E8 polling helper will retry when the state becomes clean."
           fi
