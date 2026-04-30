@@ -128,13 +128,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ── Checkout ──────────────────────────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.dev_bot_pat }}
-          fetch-depth: 0
-
+      # ── agent:pause kill-switch — first step, no checkout needed ──────────
       - name: Check automation pause labels
         id: pause-guard
         env:
@@ -206,6 +200,14 @@ jobs:
           if [[ -z "$pause_label" ]]; then
             echo "No pause labels present on ${target_type} #${target_number}; continuing."
           fi
+
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        if: ${{ steps.pause-guard.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.dev_bot_pat }}
+          fetch-depth: 0
 
       # ── Safety guard ──────────────────────────────────────────────────────
       - name: Run safety guard

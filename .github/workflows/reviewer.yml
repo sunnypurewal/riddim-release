@@ -87,7 +87,39 @@ jobs:
           ref: ${{ github.workflow_sha }}
           token: ${{ secrets.REVIEWER_BOT_PAT }}
 
+      # ── agent:pause kill-switch — must be first step after checkout ─────────
+      # Exit 0 immediately if agent:pause is on the PR. This prevents quota burn
+      # on paused PRs. Must precede claude-code-action and all expensive steps.
+      - name: Check agent:pause kill-switch
+        id: pause-check
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PAUSE_LABEL: ${{ env.PAUSE_LABEL }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "ACT mode — skipping label check, continuing."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          labels="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)"
+
+          if echo "$labels" | grep -qxF "${PAUSE_LABEL}"; then
+            echo "agent:pause label detected — skipping reviewer workflow."
+            echo "::notice::Reviewer agent skipped: agent:pause label is present on PR #${PR_NUMBER}."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "No pause label found on PR #${PR_NUMBER}; continuing."
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Print reusable workflow inputs
+        if: ${{ steps.pause-check.outputs.skip != 'true' }}
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
           MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
@@ -103,6 +135,7 @@ jobs:
 
       - name: Resolve caller PR head SHA
         id: pr_metadata
+        if: ${{ steps.pause-check.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -123,6 +156,7 @@ jobs:
 
       - name: Run reviewer guard
         id: guard
+        if: ${{ steps.pause-check.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_BOT_PAT }}
           MOCK_REVIEWER_VERDICT: ${{ inputs.mock_reviewer_verdict }}
