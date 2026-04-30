@@ -11,21 +11,18 @@ The workflow provides these environment variables:
 - `GH_REPO`: owner/name of the repository containing the pull request.
 - `PR_NUMBER`: pull request number to review.
 - `REVIEWER_STATUS_CHECK`: required status-check name for later workflow steps.
+- `PR_METADATA`: JSON — already-fetched output of `gh pr view` (title, body, author, branches, files, commits, reviews, comments). Use this directly; do not re-fetch with `gh pr view`.
+- `PR_DIFF`: unified diff of the pull request (may be truncated at 32 KB for very large PRs). Use this directly; do not re-fetch with `gh pr diff`.
 
 ## Required Context
 
-Before reviewing, gather the relevant context:
+The PR metadata and diff are pre-loaded above. Read the following additionally:
 
-1. Read the pull request metadata and body:
-   `gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json title,body,author,baseRefName,headRefName,files,commits,reviews,comments`.
-2. Read the pull request diff:
-   `gh pr diff "$PR_NUMBER" --repo "$GH_REPO"`.
-3. If the PR body links or names a Jira ticket, read that ticket's acceptance
-   criteria from the PR body or available linked context.
-4. Read the consumer repository's `consumer/CLAUDE.md` and `consumer/AGENTS.md`
-   when either file exists. Treat those files as local project conventions and
-   follow them for the review.
-5. Use tests, build output, and verification evidence from the PR description or
+1. `consumer/CLAUDE.md` and `consumer/AGENTS.md` — read these when they exist.
+   Treat them as authoritative project conventions for the review.
+2. If the PR body references a Jira ticket, use the acceptance criteria written
+   in the PR body itself. Do not make external API calls to look up Jira tickets.
+3. Use tests, build output, and verification evidence from the PR description or
    comments when judging whether the change is ready.
 
 ## Review Standard

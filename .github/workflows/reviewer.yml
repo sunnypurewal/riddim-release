@@ -326,6 +326,30 @@ jobs:
 
           echo "Reviewer prompt loaded and contains required verdict instructions."
 
+      - name: Pre-fetch PR context
+        if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
+        id: pr_context
+        env:
+          GH_TOKEN: ${{ steps.reviewer-bot-token.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "metadata<<EOF"
+            gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+              --json title,body,author,baseRefName,headRefName,files,commits,reviews,comments
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+          raw_diff="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}")"
+          truncated_diff="${raw_diff:0:32000}"
+          {
+            echo "diff<<EOF"
+            printf '%s\n' "${truncated_diff}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Run reviewer agent
         if: ${{ env.ACT != 'true' && steps.pause-check.outputs.skip != 'true' && steps.guard.outputs.exit_code == '0' }}
         uses: anthropics/claude-code-action@v1
@@ -334,13 +358,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REVIEWER_STATUS_CHECK: ${{ env.REVIEWER_STATUS_CHECK }}
+          PR_METADATA: ${{ steps.pr_context.outputs.metadata }}
+          PR_DIFF: ${{ steps.pr_context.outputs.diff }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.reviewer-bot-token.outputs.token }}
           prompt: ${{ steps.reviewer_prompt.outputs.prompt }}
           allowed_bots: '*'
           claude_args: |
-            --max-turns 10
+            --max-turns 20
             --allowedTools Read,Edit,Write,Bash(git*),Bash(gh*)
 
       - name: Resolve reviewer verdict
