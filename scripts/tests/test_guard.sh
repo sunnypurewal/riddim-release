@@ -87,7 +87,7 @@ assert_failure_contains \
 
 export GUARD_TEST_NAME_ONLY=$'README.md\nscripts/release/compute_next_version.py'
 export GUARD_MAX_LINES=5
-export GUARD_TEST_STAT=$' README.md                             | 3 ++-\n scripts/release/compute_next_version.py | 4 ++--\n 2 files changed, 6 insertions(+), 1 deletion(-)'
+export GUARD_TEST_STAT=$' README.md                               | 4 ++++\n scripts/release/compute_next_version.py | 3 ++-\n 2 files changed, 6 insertions(+), 1 deletion(-)'
 assert_failure_contains \
   "oversize line count exits 1" \
   "Diff exceeds size threshold: 7 changed lines (cap 5)" \
