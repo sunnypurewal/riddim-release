@@ -6,7 +6,7 @@ usage() {
 Usage: scripts/init-labels.sh [OWNER/REPO ...]
 
 Creates or updates the GitHub labels used by the autonomous PR agent loop.
-When no repositories are provided, the RIDDIM-91 host and first consumer are used:
+When no repositories are provided, the defaults are used:
   RiddimSoftware/riddim-release
   RiddimSoftware/epac
 USAGE
@@ -26,28 +26,39 @@ if [[ ${#repos[@]} -eq 0 ]]; then
 fi
 
 labels=(
-  "agent:build|fb8c00|Triggers the autonomous developer workflow initial build."
-  "agent:pause|6a737d|Manual override that short-circuits autonomous workflows."
-  "agent:needs-human|d73a4a|Blocks automation when guardrails or attempt caps require a human."
-  "agent:attempt-1|ffd8a8|Autonomous workflow attempt counter: first attempt."
-  "agent:attempt-2|ffb56b|Autonomous workflow attempt counter: second attempt."
-  "agent:attempt-3|ff922b|Autonomous workflow attempt counter: third and final default attempt."
+  "agent:build|E8A838|Triggers the developer workflow (initial build)"
+  "agent:pause|B60205|Kill switch: short-circuits both workflows; no agent invocation"
+  "agent:needs-human|D93F0B|Set by cap-hit or guard-script; blocks auto-merge until removed"
+  "agent:attempt-1|FEF2C0|First build or fix-up attempt"
+  "agent:attempt-2|FBD45C|Second fix-up attempt"
+  "agent:attempt-3|F9A825|Third fix-up attempt (cap default; triggers needs-human on next)"
 )
 
-ensure_label() {
+label_exists() {
   local repo="$1"
   local name="$2"
-  local color="$3"
-  local description="$4"
 
-  gh label create "$name" --repo "$repo" --color "$color" --description "$description" --force >/dev/null
-  printf '%s: ensured %s\n' "$repo" "$name"
+  gh api "repos/$repo/labels?per_page=100" --paginate --jq '.[].name' \
+    | grep -Fxq "$name"
+}
+
+create_label() {
+  local repo="$1" name="$2" color="$3" description="$4"
+
+  if label_exists "$repo" "$name"; then
+    echo "[skip] $name already exists on $repo"
+    return
+  fi
+
+  gh label create "$name" --repo "$repo" --color "$color" --description "$description"
+  echo "[created] $name on $repo"
 }
 
 for repo in "${repos[@]}"; do
   printf 'Initializing labels for %s\n' "$repo"
   for label in "${labels[@]}"; do
     IFS='|' read -r name color description <<<"$label"
-    ensure_label "$repo" "$name" "$color" "$description"
+    create_label "$repo" "$name" "$color" "$description"
   done
+
 done
