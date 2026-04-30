@@ -13,7 +13,7 @@ All gates must be true before labeling any epac pilot issue with `agent:build`.
 
 | Gate | Required evidence | If false |
 | --- | --- | --- |
-| E1 identities and secrets complete | RIDDIM-93 is Done; `CLAUDE_CODE_OAUTH_TOKEN`, `DEV_BOT_APP_ID`, `DEV_BOT_PRIVATE_KEY`, `REVIEWER_BOT_APP_ID`, and `REVIEWER_BOT_PRIVATE_KEY` are available to `riddim-release` and `epac` | Stop. Comment on RIDDIM-98 with the missing secret or app and link the blocking RIDDIM-93 child. |
+| E1 identities and secrets complete | RIDDIM-93 is Done; `CLAUDE_CODE_OAUTH_TOKEN`, `DEV_BOT_PAT`, and `REVIEWER_BOT_PAT` are available to `riddim-release` and `epac` | Stop. Comment on RIDDIM-98 with the missing secret or app and link the blocking RIDDIM-93 child. |
 | E2 developer workflow merged | RIDDIM-94 is Done and `.github/workflows/developer.yml` is on `riddim-release/main` | Stop. Link the open PR or ticket blocking developer workflow execution. |
 | E3 reviewer workflow merged | RIDDIM-95 is Done and `.github/workflows/reviewer.yml` is on `riddim-release/main` | Stop. Link the open PR or ticket blocking reviewer approval. |
 | E4 epac enrollment merged | RIDDIM-96 is Done; epac has the trigger wrapper, CODEOWNERS, labels, branch protection, and required `reviewer-agent-passed` check | Stop. Link the open epac enrollment PR or branch-protection gap. |
