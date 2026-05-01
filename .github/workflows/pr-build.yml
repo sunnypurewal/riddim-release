@@ -57,7 +57,7 @@ on:
         description: JSON-encoded runner labels array (e.g. '["macos-15"]'). Defaults to self-hosted macOS.
         required: false
         type: string
-        default: '["self-hosted","macOS"]'
+        default: '["macos-15"]'
 
 jobs:
   pr-build:
