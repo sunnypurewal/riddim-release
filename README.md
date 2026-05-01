@@ -276,7 +276,6 @@ TestFlight build with the matching marketing version, and submits that build.
 | `.github/workflows/website-preview.yml` | `website-preview.yml` shim | Deploy an Amplify preview branch for a website PR |
 | `.github/workflows/website-promote.yml` | `website-promote.yml` shim | Promote the exact preview artifact to the production Amplify branch |
 | `.github/workflows/website-cleanup.yml` | `website-cleanup.yml` shim | Delete an abandoned website preview branch |
-| `.github/workflows/sprint-autopilot.yml` | Used in this repo | End a completed Jira sprint and start the next one when work is clear |
 
 ### Shared Fastlane lanes
 
@@ -423,13 +422,6 @@ Changes to metadata can be pushed independently through
 `deliver-metadata.yml`. Screenshots and app previews are covered in
 [docs/aso-playbook.md](docs/aso-playbook.md).
 
-### Sprint autopilot
-
-This repo includes a scheduled/manual Jira sprint autopilot that checks whether
-all sprint issues are done and whether the repo has no open PRs. If both are
-true, it closes the active sprint and starts the next future sprint. See
-[docs/sprint-autopilot.md](docs/sprint-autopilot.md).
-
 ## Local Development
 
 Run focused tests:
@@ -488,8 +480,6 @@ Start with the docs closest to the task:
 - Runner setup: [docs/runner-setup.md](docs/runner-setup.md)
 - Budget watcher: [docs/budget-watcher.md](docs/budget-watcher.md)
 - ASO and app previews: [docs/aso-playbook.md](docs/aso-playbook.md)
-- Sprint autopilot: [docs/sprint-autopilot.md](docs/sprint-autopilot.md)
-
 For bugs or changes, open a GitHub issue or pull request in this repo and link
 the relevant RIDDIM Jira ticket.
 
