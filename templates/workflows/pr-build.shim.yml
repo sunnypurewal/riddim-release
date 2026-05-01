@@ -1,0 +1,18 @@
+# riddim-release template - copy to .github/workflows/pr-build.yml and adjust
+# Runs a no-signing compile check on every PR to main.
+# Requires repo variables: SCHEME, XCODEPROJ_PATH
+# Optional variables: IOS_WORKDIR (default: ios), RUNNER_LABELS_MAC
+name: PR Build
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: RiddimSoftware/riddim-release/.github/workflows/pr-build.yml@v1
+    with:
+      scheme:            ${{ vars.SCHEME }}
+      project:           ${{ vars.XCODEPROJ_PATH }}
+      working_directory: ${{ vars.IOS_WORKDIR || 'ios' }}
+      runner_labels:     ${{ vars.RUNNER_LABELS_MAC || '["self-hosted","macOS"]' }}
