@@ -53,11 +53,16 @@ on:
         required: false
         type: string
         default: ""
+      runner_labels:
+        description: JSON-encoded runner labels array (e.g. '["macos-15"]'). Defaults to self-hosted macOS.
+        required: false
+        type: string
+        default: '["self-hosted","macOS"]'
 
 jobs:
   pr-build:
     name: pr-build
-    runs-on: ["self-hosted", "macOS"]
+    runs-on: ${{ fromJSON(inputs.runner_labels || '["self-hosted","macOS"]') }}
     steps:
       - uses: actions/checkout@v4
 
