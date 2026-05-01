@@ -97,6 +97,6 @@ jobs:
           xcodebuild build \
             "${args[@]}" \
             -scheme "${SCHEME}" \
-            -destination "generic/platform=iOS Simulator" \
+            -destination "generic/platform=iOS" \
             -jobs "$(sysctl -n hw.logicalcpu)" \
             CODE_SIGNING_ALLOWED=NO
