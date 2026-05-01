@@ -297,7 +297,6 @@ The shared lanes handle:
 | `scripts/release/` | App Store Connect version lookup, build selection, release notes, evidence verification |
 | `scripts/runner/` | AWS secret fetchers and ephemeral keychain setup |
 | `scripts/marketing/` | ASO baseline and App Preview helper scripts |
-| `scripts/jira/` | Jira sprint autopilot |
 
 ## Configuration Reference
 
@@ -340,20 +339,6 @@ The shared lanes handle:
 | `RUNNER_BUDGET_PAT` | Budget watcher token for reading billing and writing runner variables |
 | `SLACK_RELEASES_WEBHOOK` | Post a build-ready-for-QA Slack message |
 | `SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | Sentry release integration and dSYM upload |
-| `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira sprint autopilot credentials |
-
-### Repo-internal automation variables
-
-These are used by `riddim-release` itself, not by normal consuming app
-adoption:
-
-| Variable | Purpose |
-| --- | --- |
-| `SPRINT_AUTOPILOT_ENABLED` | Enable scheduled Jira sprint autopilot |
-| `SPRINT_AUTOPILOT_DRY_RUN` | Keep scheduled sprint autopilot read-only |
-| `JIRA_BASE_URL` | Jira site URL for sprint autopilot |
-| `JIRA_BOARD_ID` | Jira Software board ID for sprint autopilot |
-| `NEXT_SPRINT_DURATION_DAYS` | Fallback length when starting an undated future sprint |
 
 ## Repository Map
 
@@ -361,7 +346,6 @@ adoption:
 .github/workflows/   Reusable workflows and repo self-tests
 fastlane/            Shared Fastfile and helper code
 scripts/release/     App Store Connect release helpers
-scripts/jira/        Jira sprint autopilot
 scripts/marketing/   ASO and App Preview tools
 scripts/runner/      Runner-side AWS and keychain helpers
 templates/           Files copied into consuming app repos
@@ -427,7 +411,6 @@ Changes to metadata can be pushed independently through
 Run focused tests:
 
 ```bash
-python3 -m unittest discover -s scripts/jira -p 'test_*.py'
 python3 -m unittest discover scripts/release
 ```
 
