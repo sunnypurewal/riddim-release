@@ -14,7 +14,6 @@ The intended result is boring release operations:
 - generate a draft GitHub Release as the QA gate
 - publish that Release to submit the matching build to App Store review
 - push App Store metadata without shipping a binary
-- collect App Store Connect analytics as reproducible artifacts
 - keep runner selection centralized in repository variables
 - deploy website PR previews and promote the exact approved artifact to
   production behind a GitHub Environment approval gate
@@ -166,7 +165,6 @@ for file in \
   build-deploy.shim.yml \
   release-app-store.shim.yml \
   deliver-metadata.shim.yml \
-  collect-asc-analytics.shim.yml \
   budget-watcher.yml
 do
   target="${file/.shim/}"
@@ -275,7 +273,6 @@ TestFlight build with the matching marketing version, and submits that build.
 | `.github/workflows/build-deploy.yml` | `build-deploy.yml` shim | Compute version, upload TestFlight build, create draft GitHub Release |
 | `.github/workflows/release-app-store.yml` | `release-app-store.yml` shim | Submit the release-tagged TestFlight build to App Store review |
 | `.github/workflows/deliver-metadata.yml` | `deliver-metadata.yml` shim | Push App Store listing metadata without uploading a binary |
-| `.github/workflows/collect-asc-analytics.yml` | `collect-asc-analytics.yml` shim | Collect and normalize App Store Connect analytics artifacts |
 | `.github/workflows/website-preview.yml` | `website-preview.yml` shim | Deploy an Amplify preview branch for a website PR |
 | `.github/workflows/website-promote.yml` | `website-promote.yml` shim | Promote the exact preview artifact to the production Amplify branch |
 | `.github/workflows/website-cleanup.yml` | `website-cleanup.yml` shim | Delete an abandoned website preview branch |
@@ -299,7 +296,6 @@ The shared lanes handle:
 | Path | Purpose |
 | --- | --- |
 | `scripts/release/` | App Store Connect version lookup, build selection, release notes, evidence verification |
-| `scripts/analytics/` | ASC report collection, normalization, artifact contracts, benchmark evaluation |
 | `scripts/runner/` | AWS secret fetchers and ephemeral keychain setup |
 | `scripts/marketing/` | ASO baseline and App Preview helper scripts |
 | `scripts/jira/` | Jira sprint autopilot |
@@ -345,7 +341,6 @@ The shared lanes handle:
 | `RUNNER_BUDGET_PAT` | Budget watcher token for reading billing and writing runner variables |
 | `SLACK_RELEASES_WEBHOOK` | Post a build-ready-for-QA Slack message |
 | `SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | Sentry release integration and dSYM upload |
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY` | Direct ASC credentials for analytics collection |
 | `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira sprint autopilot credentials |
 
 ### Repo-internal automation variables
@@ -367,12 +362,11 @@ adoption:
 .github/workflows/   Reusable workflows and repo self-tests
 fastlane/            Shared Fastfile and helper code
 scripts/release/     App Store Connect release helpers
-scripts/analytics/   App Store Connect analytics collectors and normalizers
 scripts/jira/        Jira sprint autopilot
 scripts/marketing/   ASO and App Preview tools
 scripts/runner/      Runner-side AWS and keychain helpers
 templates/           Files copied into consuming app repos
-docs/                Adoption, provisioning, runner, analytics, and ops guides
+docs/                Adoption, provisioning, runner, and ops guides
 ```
 
 ## Operating the System
@@ -429,12 +423,6 @@ Changes to metadata can be pushed independently through
 `deliver-metadata.yml`. Screenshots and app previews are covered in
 [docs/aso-playbook.md](docs/aso-playbook.md).
 
-### Analytics artifacts
-
-Use `collect-asc-analytics.yml` in consuming repos to collect raw and normalized
-App Store Connect report artifacts. See [docs/asc-analytics.md](docs/asc-analytics.md)
-and [docs/analytics-artifact.md](docs/analytics-artifact.md).
-
 ### Sprint autopilot
 
 This repo includes a scheduled/manual Jira sprint autopilot that checks whether
@@ -448,7 +436,6 @@ Run focused tests:
 
 ```bash
 python3 -m unittest discover -s scripts/jira -p 'test_*.py'
-python3 -m unittest discover scripts/analytics
 python3 -m unittest discover scripts/release
 ```
 
@@ -467,8 +454,7 @@ live credentials.
 - GitHub Actions assumes AWS roles through OIDC; long-lived AWS keys should not
   be stored in app repos.
 - App Store Connect API material is stored in AWS Secrets Manager for release
-  workflows, or in GitHub secrets only for analytics workflows that explicitly
-  require direct ASC credentials.
+  workflows.
 - Signing certificates are fetched at runtime and imported into an ephemeral
   keychain.
 - The private `riddim-release` checkout uses a narrow read token where possible.
@@ -501,7 +487,6 @@ Start with the docs closest to the task:
 - App Store Connect setup: [docs/asc-provisioning.md](docs/asc-provisioning.md)
 - Runner setup: [docs/runner-setup.md](docs/runner-setup.md)
 - Budget watcher: [docs/budget-watcher.md](docs/budget-watcher.md)
-- Analytics: [docs/asc-analytics.md](docs/asc-analytics.md)
 - ASO and app previews: [docs/aso-playbook.md](docs/aso-playbook.md)
 - Sprint autopilot: [docs/sprint-autopilot.md](docs/sprint-autopilot.md)
 
