@@ -70,13 +70,21 @@ jobs:
         if: ${{ inputs.xcode_version != '' }}
         run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer
 
-      - name: Cache SPM packages
+      # Cache the full DerivedData directory, which covers both SPM package
+      # sources (SourcePackages/) and incremental build artifacts. Using a
+      # fixed -derivedDataPath keeps the cache location predictable regardless
+      # of working_directory. Key includes Swift sources and project file so
+      # the cache invalidates on any structural change; the scheme-scoped
+      # restore-key still provides an incremental hit (only changed files
+      # recompile) when sources differ but the overall project hasn't changed.
+      - name: Cache DerivedData
         uses: actions/cache@v4
         with:
-          path: ~/Library/Developer/Xcode/DerivedData/*/SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          path: .deriveddata
+          key: ${{ runner.os }}-xcode-${{ inputs.scheme }}-${{ hashFiles('**/Package.resolved', '**/*.swift', '**/*.xcodeproj/project.pbxproj') }}
           restore-keys: |
-            ${{ runner.os }}-spm-
+            ${{ runner.os }}-xcode-${{ inputs.scheme }}-
+            ${{ runner.os }}-xcode-
 
       - name: Build
         working-directory: ${{ inputs.working_directory }}
@@ -98,5 +106,6 @@ jobs:
             "${args[@]}" \
             -scheme "${SCHEME}" \
             -destination "generic/platform=iOS" \
+            -derivedDataPath "$GITHUB_WORKSPACE/.deriveddata" \
             -jobs "$(sysctl -n hw.logicalcpu)" \
             CODE_SIGNING_ALLOWED=NO
