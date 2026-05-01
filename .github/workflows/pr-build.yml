@@ -70,6 +70,14 @@ jobs:
         if: ${{ inputs.xcode_version != '' }}
         run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer
 
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/*/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
       - name: Build
         working-directory: ${{ inputs.working_directory }}
         env:
@@ -90,4 +98,6 @@ jobs:
             "${args[@]}" \
             -scheme "${SCHEME}" \
             -destination "generic/platform=iOS Simulator" \
+            -onlyActiveArch YES \
+            -jobs "$(sysctl -n hw.logicalcpu)" \
             CODE_SIGNING_ALLOWED=NO
