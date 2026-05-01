@@ -98,6 +98,5 @@ jobs:
             "${args[@]}" \
             -scheme "${SCHEME}" \
             -destination "generic/platform=iOS Simulator" \
-            -onlyActiveArch YES \
             -jobs "$(sysctl -n hw.logicalcpu)" \
             CODE_SIGNING_ALLOWED=NO
