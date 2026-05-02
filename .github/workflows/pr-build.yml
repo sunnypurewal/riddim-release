@@ -108,4 +108,6 @@ jobs:
             -destination "generic/platform=iOS" \
             -derivedDataPath "$GITHUB_WORKSPACE/.deriveddata" \
             -jobs "$(sysctl -n hw.logicalcpu)" \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
+            ENABLE_TESTABILITY=NO
