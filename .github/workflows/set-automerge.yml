@@ -1,0 +1,63 @@
+# Reusable workflow: enable auto-merge on every newly opened PR.
+#
+# Consumer repos call this from a thin trigger wrapper:
+#
+#   on:
+#     pull_request:
+#       types: [opened]
+#       branches: [main]
+#
+#   jobs:
+#     set-automerge:
+#       uses: RiddimSoftware/riddim-release/.github/workflows/set-automerge.yml@main
+#       secrets: inherit
+#
+# REQUIRED SECRETS (inherited from consumer repo):
+#   DEV_BOT_APP_ID / dev_bot_app_id
+#   DEV_BOT_PRIVATE_KEY / dev_bot_private_key
+
+name: Set Auto-Merge
+
+on:
+  workflow_call:
+    secrets:
+      dev_bot_app_id:
+        required: true
+      dev_bot_private_key:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  set-automerge:
+    name: Set auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Generate developer-bot token
+        id: dev-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.dev_bot_app_id || secrets.DEV_BOT_APP_ID }}
+          private-key: ${{ secrets.dev_bot_private_key || secrets.DEV_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.dev-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+
+          already="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "$already" == "true" ]]; then
+            echo "Auto-merge already enabled for ${PR_URL}."
+            exit 0
+          fi
+
+          echo "Enabling auto-merge for ${PR_URL}."
+          gh pr merge --auto --squash "$PR_URL"
