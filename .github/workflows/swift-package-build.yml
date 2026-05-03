@@ -1,0 +1,30 @@
+# Reusable: build and test a Swift Package Manager project.
+# Consumer repos call this from a thin pr-build.yml trigger wrapper.
+# REQUIRED VARS: none — defaults work for standard SPM layouts.
+name: Swift Package Build
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Directory containing Package.swift (relative to repo root).
+        required: false
+        type: string
+        default: "."
+      runner_labels:
+        description: JSON-encoded runner labels array.
+        required: false
+        type: string
+        default: '["macos-15"]'
+jobs:
+  pr-build:
+    name: pr-build
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: ${{ inputs.working_directory }}
+        run: swift build 2>&1 | tee /tmp/swift-build.log; exit "${PIPESTATUS[0]}"
+      - name: Test
+        working-directory: ${{ inputs.working_directory }}
+        run: swift test 2>&1 | tee /tmp/swift-test.log; exit "${PIPESTATUS[0]}"

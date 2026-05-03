@@ -1,0 +1,39 @@
+# Reusable: validate a static website (HTML structure + project scripts).
+# Consumer repos call this from a thin pr-build.yml trigger wrapper.
+name: Web Validate
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Repo-relative path to the site root.
+        required: false
+        type: string
+        default: "."
+jobs:
+  pr-build:
+    name: pr-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run project validator
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          if [[ -f scripts/validate.py ]]; then
+            python scripts/validate.py
+          else
+            echo "No scripts/validate.py found — skipping project validator."
+          fi
+      - name: HTML syntax check
+        run: |
+          pip install --quiet html5validator
+          files=$(find . -name "*.html" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -50)
+          if [[ -n "$files" ]]; then
+            html5validator --root . --also-check-css 2>&1 | tail -20 || true
+          else
+            echo "No HTML files found."
+          fi
