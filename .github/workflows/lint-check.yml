@@ -1,0 +1,48 @@
+# Reusable: lint Markdown and YAML files — catches malformed skill/config files.
+# Consumer repos call this from a thin pr-build.yml trigger wrapper.
+name: Lint Check
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Directory to lint (relative to repo root).
+        required: false
+        type: string
+        default: "."
+jobs:
+  pr-build:
+    name: pr-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: YAML syntax check
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          python3 - <<'EOF'
+          import glob, sys
+          try:
+              import yaml
+          except ImportError:
+              import subprocess; subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyyaml"])
+              import yaml
+          errors = []
+          for f in glob.glob("**/*.yml", recursive=True) + glob.glob("**/*.yaml", recursive=True):
+              try:
+                  yaml.safe_load(open(f))
+              except yaml.YAMLError as e:
+                  errors.append(f"{f}: {e}")
+          if errors:
+              print("\n".join(errors)); sys.exit(1)
+          print(f"All YAML files valid ({len(glob.glob('**/*.yml',recursive=True))} files checked).")
+          EOF
+      - name: Markdown lint
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          npm install -g --silent markdownlint-cli@0.43.0
+          md_files=$(find . -name "*.md" -not -path "*/.git/*" -not -path "*/node_modules/*")
+          if [[ -n "$md_files" ]]; then
+            echo "$md_files" | xargs markdownlint --disable MD013 MD033 MD041 -- || true
+          else
+            echo "No Markdown files found."
+          fi

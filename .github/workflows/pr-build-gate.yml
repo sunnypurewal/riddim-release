@@ -1,0 +1,9 @@
+name: PR Build
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: RiddimSoftware/riddim-release/.github/workflows/actionlint-check.yml@main

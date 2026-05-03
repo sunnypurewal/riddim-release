@@ -1,0 +1,19 @@
+# Reusable: validate GitHub Actions workflow files with actionlint.
+# Catches invalid action refs, bad expressions, wrong secret names.
+# Consumer repos call this from a thin pr-build.yml trigger wrapper.
+name: Actionlint Check
+on:
+  workflow_call:
+jobs:
+  pr-build:
+    name: pr-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint
+        run: |
+          bash <(curl -sL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7
+          sudo mv actionlint /usr/local/bin/
+      - name: Run actionlint
+        run: actionlint -color .github/workflows/*.yml
