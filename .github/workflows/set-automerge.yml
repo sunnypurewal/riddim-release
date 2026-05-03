@@ -12,18 +12,18 @@
 #       uses: RiddimSoftware/riddim-release/.github/workflows/set-automerge.yml@main
 #       secrets: inherit
 #
-# REQUIRED SECRETS (inherited from consumer repo):
-#   DEV_BOT_APP_ID / dev_bot_app_id
-#   DEV_BOT_PRIVATE_KEY / dev_bot_private_key
+# REQUIRED SECRETS (inherited from consumer repo via `secrets: inherit`):
+#   DEV_BOT_APP_ID
+#   DEV_BOT_PRIVATE_KEY
 
 name: Set Auto-Merge
 
 on:
   workflow_call:
     secrets:
-      dev_bot_app_id:
+      DEV_BOT_APP_ID:
         required: true
-      dev_bot_private_key:
+      DEV_BOT_PRIVATE_KEY:
         required: true
 
 permissions:
@@ -42,8 +42,8 @@ jobs:
         id: dev-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.dev_bot_app_id || secrets.DEV_BOT_APP_ID }}
-          private-key: ${{ secrets.dev_bot_private_key || secrets.DEV_BOT_PRIVATE_KEY }}
+          app-id: ${{ secrets.DEV_BOT_APP_ID }}
+          private-key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Enable auto-merge
