@@ -105,6 +105,12 @@ jobs:
           SCHEME: ${{ inputs.scheme }}
           PROJECT: ${{ inputs.project }}
           WORKSPACE: ${{ inputs.workspace }}
+          # Prevent ~/.gitconfig from being read during xcodebuild's package
+          # resolution and submodule cloning. Self-hosted runners often have
+          # url.insteadOf rules (e.g. https→SSH) that break cloning public
+          # repos. The actions/checkout extraheader lives in the repo-local
+          # .git/config and is unaffected by this setting.
+          GIT_CONFIG_GLOBAL: /dev/null
         run: |
           set -euo pipefail
 
