@@ -58,6 +58,13 @@ on:
         required: false
         type: string
         default: '["macos-15"]'
+      pre_build_script:
+        description: >
+          Optional shell commands to run from the repo root before xcodebuild
+          (e.g. to download vendored binary frameworks that are gitignored).
+        required: false
+        type: string
+        default: ""
 
 jobs:
   pr-build:
@@ -77,6 +84,10 @@ jobs:
       # the cache invalidates on any structural change; the scheme-scoped
       # restore-key still provides an incremental hit (only changed files
       # recompile) when sources differ but the overall project hasn't changed.
+      - name: Pre-build setup
+        if: ${{ inputs.pre_build_script != '' }}
+        run: ${{ inputs.pre_build_script }}
+
       - name: Cache DerivedData
         uses: actions/cache@v4
         with:
