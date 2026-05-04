@@ -62,22 +62,8 @@ on:
         description: >
           Optional shell commands to run from the repo root before xcodebuild
           (e.g. to download vendored binary frameworks that are gitignored).
-          Runs only on pre_build_cache miss when pre_build_cache_paths is set.
-        required: false
-        type: string
-        default: ""
-      pre_build_cache_paths:
-        description: >
-          Newline-separated paths to cache between runs (output of pre_build_script).
-          When set, pre_build_script only runs on a cache miss.
-        required: false
-        type: string
-        default: ""
-      pre_build_cache_key:
-        description: >
-          Cache key for pre_build_cache_paths. Should encode the upstream versions
-          of the vendored artifacts so the cache invalidates on version bumps.
-          Example: "llamacpp-b8873-mediapipe-0.10.33"
+          The script is responsible for its own caching strategy; on self-hosted
+          runners prefer $RUNNER_TOOL_CACHE over actions/cache to avoid cloud I/O.
         required: false
         type: string
         default: ""
@@ -93,16 +79,8 @@ jobs:
         if: ${{ inputs.xcode_version != '' }}
         run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer
 
-      - name: Cache vendored frameworks
-        if: ${{ inputs.pre_build_cache_paths != '' }}
-        id: vendored-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ inputs.pre_build_cache_paths }}
-          key: ${{ runner.os }}-vendored-${{ inputs.pre_build_cache_key }}
-
       - name: Pre-build setup
-        if: ${{ inputs.pre_build_script != '' && steps.vendored-cache.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.pre_build_script != '' }}
         run: ${{ inputs.pre_build_script }}
 
       # Cache the full DerivedData directory, which covers both SPM package
