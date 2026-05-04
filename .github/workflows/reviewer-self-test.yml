@@ -1,0 +1,44 @@
+# ============================================================================
+# reviewer-self-test.yml — Self-test for the reusable reviewer workflow
+# RiddimSoftware/riddim-release
+#
+# Triggered manually via workflow_dispatch. Exercises the reviewer path
+# against a real PR in riddim-release (or a provided PR number) so that
+# changes to reviewer.yml can be validated before merging.
+#
+# USAGE:
+#   1. Open a test PR in riddim-release (or use an existing one).
+#   2. Run this workflow manually: Actions → Reviewer Self-Test → Run workflow
+#   3. Provide the PR number when prompted.
+#   4. Verify the agent posts a review comment and emits approve/request-changes.
+#
+# This workflow is NOT called by consumers. It exists solely for
+# pre-merge validation of reviewer.yml in this repo.
+# ============================================================================
+
+name: Reviewer Self-Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number in riddim-release to review (must be an open PR)"
+        required: true
+        type: number
+      prompt_override:
+        description: "Optional: override the reviewer prompt for testing"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  self-test:
+    name: Self-Test Reviewer Agent
+    uses: RiddimSoftware/riddim-release/.github/workflows/reviewer.yml@main
+    with:
+      pr_number: ${{ fromJson(inputs.pr_number) }}
+      prompt_override: ${{ inputs.prompt_override }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      REVIEWER_BOT_APP_ID: ${{ secrets.REVIEWER_BOT_APP_ID }}
+      REVIEWER_BOT_PRIVATE_KEY: ${{ secrets.REVIEWER_BOT_PRIVATE_KEY }}
