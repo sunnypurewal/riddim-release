@@ -83,6 +83,22 @@ jobs:
         if: ${{ inputs.pre_build_script != '' }}
         run: ${{ inputs.pre_build_script }}
 
+      # Isolate git config for xcodebuild / SPM package resolution:
+      # - Forces all github.com URLs to HTTPS (fixes runners where port 22 is
+      #   blocked and SSH-based SPM submodule clones fail).
+      # - Overrides GIT_CONFIG_GLOBAL so ~/.gitconfig rules (e.g. https→SSH
+      #   rewrites) cannot interfere. actions/checkout's auth header is in the
+      #   repo-local .git/config and is unaffected by this override.
+      - name: Configure git for package resolution
+        run: |
+          cat > "$RUNNER_TEMP/ci-gitconfig" <<'EOF'
+          [url "https://github.com/"]
+            insteadOf = git@github.com:
+            insteadOf = ssh://git@github.com/
+            insteadOf = git://github.com/
+          EOF
+          echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/ci-gitconfig" >> "$GITHUB_ENV"
+
       # Cache the full DerivedData directory, which covers both SPM package
       # sources (SourcePackages/) and incremental build artifacts. Using a
       # fixed -derivedDataPath keeps the cache location predictable regardless
@@ -105,12 +121,6 @@ jobs:
           SCHEME: ${{ inputs.scheme }}
           PROJECT: ${{ inputs.project }}
           WORKSPACE: ${{ inputs.workspace }}
-          # Prevent ~/.gitconfig from being read during xcodebuild's package
-          # resolution and submodule cloning. Self-hosted runners often have
-          # url.insteadOf rules (e.g. https→SSH) that break cloning public
-          # repos. The actions/checkout extraheader lives in the repo-local
-          # .git/config and is unaffected by this setting.
-          GIT_CONFIG_GLOBAL: /dev/null
         run: |
           set -euo pipefail
 

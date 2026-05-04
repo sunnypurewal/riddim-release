@@ -1,4 +1,4 @@
-name: PR Build
+name: PR Gate
 on:
   pull_request:
     branches: [main]
@@ -6,4 +6,4 @@ permissions:
   contents: read
 jobs:
   call:
-    uses: RiddimSoftware/riddim-release/.github/workflows/actionlint-check.yml@claude/universal-pr-build
+    uses: RiddimSoftware/riddim-release/.github/workflows/actionlint-check.yml@main
