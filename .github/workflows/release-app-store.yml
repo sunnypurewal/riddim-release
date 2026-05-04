@@ -218,8 +218,19 @@ jobs:
         if: ${{ inputs.force_self_hosted || contains(fromJSON(inputs.runner_labels_linux), 'self-hosted') }}
         working-directory: ${{ inputs.ios_workdir }}
         run: |
-          export BUNDLE_VERSION=system
-          echo "BUNDLE_VERSION=system" >> "$GITHUB_ENV"
+          # Prefer Homebrew Ruby 3.x over system Ruby 2.6 (bundler ≥ 3.x requires Ruby ≥ 3.1).
+          for brew_ruby in /opt/homebrew/opt/ruby/bin /opt/homebrew/opt/ruby@3.3/bin /opt/homebrew/opt/ruby@3/bin; do
+            if [[ -x "$brew_ruby/ruby" ]]; then
+              export PATH="$brew_ruby:$PATH"
+              echo "PATH=$brew_ruby:$PATH" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+          # Install the bundler version pinned in Gemfile.lock.
+          BUNDLER_VERSION=$(grep -A1 "BUNDLED WITH" Gemfile.lock 2>/dev/null | tail -1 | tr -d '[:space:]') || true
+          if [[ -n "$BUNDLER_VERSION" ]]; then
+            gem install "bundler:${BUNDLER_VERSION}" --no-document 2>&1 || true
+          fi
           bundle config set path vendor/bundle
           bundle install --jobs 4 --retry 3
 
